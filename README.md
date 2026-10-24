@@ -52,25 +52,34 @@ no acumular imágenes viejas. Los ajustes y registros se conservan en `/config`.
 - **Carpetas**: elige con un navegador de carpetas qué revisar y si cada una es
   de *Series / Anime* o de *Películas*. Solo se puede navegar dentro de
   `/media`.
-- **Nombres**: escanea, muestra los cambios agrupados por serie con casillas y
-  los aplica con un botón.
-  - Series y anime: cada episodio queda como `Serie - S01E01.ext` en su
-    carpeta de temporada (crea `Season 01` si están sueltos). Entiende `1x01`,
-    `S01.E01`, `Temporada 1 Capitulo 1`, `1.1`, números sueltos, episodios
-    dobles (`026-027` → `S01E026-E027`) y numeración absoluta (temporada 2 que
-    empieza en el 13). Los subtítulos con el mismo nombre acompañan al video.
+- **Escaneo**: una sola pasada por las carpetas elegidas, con el avance en
+  directo (fase, serie o archivo que está leyendo, tiempo y botón de cancelar).
+  El resultado es **una ficha por serie** con sus temporadas, los episodios que
+  faltan, los cambios de nombre (nombre actual → cómo quedará), los avisos y los
+  MKV sin índice. Cada ficha tiene su casilla y su botón **Aplicar esta serie**,
+  y arriba hay **Aplicar seleccionados**.
+  - Series y anime: cada episodio queda como `Serie - S01E01 - Título.ext` en
+    carpetas `Season 01` (`Season 00` para especiales). Entiende `1x01`,
+    `S01.E01`, `Temporada 1 Capitulo 1`, `1.1`, números sueltos, `2995_01`,
+    episodios dobles (`026-027` → `S01E026-E027`) y numeración absoluta. Limpia
+    los puntos, `[grupos]` y etiquetas de los nombres desordenados. Los
+    subtítulos con el mismo nombre acompañan al video.
   - **Episodios que faltan**: huecos dentro de cada temporada y, con clave de
-    TMDB, los que faltan al final según TMDB.
+    TMDB, los que faltan al final. Si faltan, avisa de los archivos que duran
+    el doble (pueden traer dos episodios).
   - **Películas sin año**: con clave de TMDB propone el año eligiendo el
     resultado cuya duración coincide con la del archivo (`Papillon` de
     150 min → 1973, no 2017). Sin clave, el año se escribe a mano.
   - **Películas duplicadas**: si la copia más pequeña es inferior a 1080p y sin
     audio dual, propone quitarla; si las dos tienen la misma calidad, propone
     quitar la más grande; si no, decides tú.
-- **Saltos MKV**: escanear, simular, arreglar y restaurar los originales.
+  - **MKV sin índice de saltos** (no dejan adelantar en algunas TV): salen en la
+    ficha con el botón **Arreglar estos N**. Se reempaquetan sin recodificar y
+    el original va al respaldo.
 - **Registros**: cada aplicación de cambios guarda un registro; *Deshacer*
   devuelve cada archivo a su sitio.
-- **Ajustes**: clave e idioma de TMDB, carpetas de papelera y de respaldo.
+- **Ajustes**: actualización, respaldo de MKV (restaurar o vaciar), clave e
+  idioma de TMDB y carpetas de papelera y respaldo.
 
 ### Clave de TMDB (opcional)
 

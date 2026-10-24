@@ -90,6 +90,11 @@ details.scard .body { padding: 0 12px 12px; }
 .ren .now { color: var(--muted); word-break: break-all; }
 .ren .new { word-break: break-all; }
 .ren .lbl { display: inline-block; width: 70px; white-space: nowrap; color: var(--muted); font-size: 11px; text-transform: uppercase; }
+.live { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
+.live .cur { margin-top: 4px; font-size: 13px; color: var(--muted); word-break: break-all; min-height: 20px; }
+.live .cur::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--accent); margin-right: 8px; animation: pulse 1s infinite; }
+@keyframes pulse { 50% { opacity: .25; } }
 .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--text);
   color: var(--bg); padding: 8px 14px; border-radius: 8px; display: none; max-width: calc(100vw - 32px); }
 </style>
@@ -99,8 +104,7 @@ details.scard .body { padding: 0 12px 12px; }
   <h1>MKV Seekfix</h1>
   <nav>
     <button data-tab="carpetas" class="on">Carpetas</button>
-    <button data-tab="nombres">Nombres</button>
-    <button data-tab="saltos">Saltos MKV</button>
+    <button data-tab="escaneo">Escaneo</button>
     <button data-tab="registros">Registros</button>
     <button data-tab="ajustes">Ajustes</button>
   </nav>
@@ -112,7 +116,7 @@ details.scard .body { padding: 0 12px 12px; }
   <div class="card">
     <h2>Carpetas a revisar</h2>
     <p class="muted small">Elige las carpetas de tu biblioteca y di qué contiene cada una. Se usan en
-      <b>Nombres</b> y en <b>Saltos MKV</b>.</p>
+      <b>Escaneo</b>.</p>
     <ul class="plain" id="folders"></ul>
     <div class="row" style="margin-top:10px">
       <button class="b primary" id="addFolder">Añadir carpeta</button>
@@ -120,17 +124,27 @@ details.scard .body { padding: 0 12px 12px; }
   </div>
 </section>
 
-<section id="nombres">
+<section id="escaneo">
   <div class="card">
-    <h2>Revisar nombres para Jellyfin</h2>
-    <p class="muted small">Series y anime: deja cada episodio como <code>Serie - S01E01</code> en su carpeta de
-      temporada. Películas: avisa de las que no tienen año y de las duplicadas. Nada se borra: lo que se
-      quita va a la papelera y todo queda en un registro para deshacer.</p>
+    <h2>Escanear la biblioteca</h2>
+    <p class="muted small">Una sola pasada por tus carpetas: <b>nombres</b> para Jellyfin (episodios como
+      <code>Serie - S01E01</code>, carpetas <code>Season 01</code>), <b>episodios que faltan</b>, películas sin año o
+      duplicadas y <b>MKV que no dejan adelantar</b> en la TV. Nada se borra: lo que se quita va a la papelera, los
+      originales de MKV al respaldo y todo queda en un registro para deshacer.</p>
     <div class="row">
       <button class="b primary" id="namesScan">Escanear carpetas</button>
       <span class="muted small" id="namesInfo"></span>
     </div>
     <div class="progress"><div id="namesBar"></div></div>
+    <div class="live" id="namesLive" hidden>
+      <div class="row" style="justify-content:space-between">
+        <b id="liveStep"></b>
+        <span class="row"><span class="muted small" id="liveTime"></span>
+          <button class="b small danger" id="liveCancel" title="Se detiene al terminar la serie o el archivo que está leyendo">Cancelar</button></span>
+      </div>
+      <div class="cur" id="liveCur"></div>
+      <pre class="log" id="liveLog"></pre>
+    </div>
   </div>
   <div class="card" id="namesResCard" hidden>
     <div class="row" style="justify-content:space-between">
@@ -144,38 +158,6 @@ details.scard .body { padding: 0 12px 12px; }
     </div>
     <p class="muted small" id="namesSummary"></p>
     <div id="namesRes"></div>
-  </div>
-</section>
-
-<section id="saltos">
-  <div class="card">
-    <h2>MKV que no dejan adelantar en la TV</h2>
-    <p class="muted small">Busca los MKV sin índice de saltos al principio y los reempaqueta sin recodificar.
-      El original se guarda en la carpeta de respaldo (Ajustes).</p>
-    <div class="row">
-      <button class="b primary" id="seekScan">Escanear carpetas</button>
-      <button class="b" id="seekCancel">Cancelar</button>
-      <span class="muted small" id="seekInfo"></span>
-    </div>
-    <div class="progress"><div id="seekBar"></div></div>
-  </div>
-  <div class="card" id="seekCard" hidden>
-    <div class="row" style="justify-content:space-between">
-      <h2>Afectados</h2>
-      <div class="row">
-        <label class="chk small"><input type="checkbox" id="seekAll" checked> Todos</label>
-        <label class="small">Máx. <input type="number" id="seekLimit" min="0" value="0" style="width:70px"></label>
-        <button class="b" id="seekDry">Simular</button>
-        <button class="b primary" id="seekFix">Arreglar seleccionados</button>
-      </div>
-    </div>
-    <div id="seekList"></div>
-  </div>
-  <div class="card">
-    <h2>Deshacer</h2>
-    <div class="row">
-      <button class="b danger" id="seekRestore">Restaurar originales del respaldo</button>
-    </div>
   </div>
 </section>
 
@@ -204,6 +186,7 @@ details.scard .body { padding: 0 12px 12px; }
     <h2>Respaldo de MKV arreglados</h2>
     <p class="small" id="bkInfo">…</p>
     <div class="row">
+      <button class="b" id="bkRestore">Restaurar originales</button>
       <button class="b danger" id="bkEmpty">Vaciar respaldo</button>
       <span class="small muted">Vacíalo cuando compruebes en la TV que los arreglados se ven y se pueden adelantar.
         Después ya no se pueden restaurar.</span>
@@ -250,7 +233,7 @@ details.scard .body { padding: 0 12px 12px; }
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
 let state = {settings: {folders: []}, media_root: "/"};
-let namesPlan = null, seekFiles = [], polling = null;
+let namesPlan = null, polling = null;
 
 function toast(msg) {
   const t = $("#toast"); t.textContent = msg; t.style.display = "block";
@@ -319,16 +302,31 @@ function needFolders() {
 }
 
 // ---------------------------------------------------------------- tareas
+function fmtTime(sec) { return Math.floor(sec / 60) + ":" + String(sec % 60).padStart(2, "0"); }
+function paintLive(j) {
+  const live = $("#namesLive");
+  if (!live) return;
+  live.hidden = !j.running;
+  if (!j.running) { $("#liveCancel").textContent = "Cancelar"; return; }
+  $("#liveStep").textContent = j.step || "Preparando…";
+  $("#liveCur").textContent = j.current || "";
+  $("#liveTime").textContent = fmtTime(j.elapsed || 0);
+  const log = $("#liveLog"); log.textContent = j.lines.slice(-8).join("\n"); log.scrollTop = 1e9;
+}
 function watch(onDone, bar, info) {
   clearInterval(polling);
   polling = setInterval(async () => {
     const j = await api("/api/job");
     if (!j) return;
     if (bar) $(bar).style.width = j.total ? (100 * j.done / j.total) + "%" : (j.running ? "30%" : "100%");
-    if (info) $(info).textContent = j.running ? `${j.done}/${j.total || "?"} …` : (j.error ? "Error: " + j.error : "Terminado");
+    if (info) $(info).textContent = j.running
+      ? (j.total >= 1000 && j.kind === "names-scan" ? Math.round(100 * j.done / j.total) + " %" : `${j.done}/${j.total || "?"} …`)
+      : (j.error ? "Error: " + j.error : "Terminado");
+    paintLive(j);
     if (!j.running) { clearInterval(polling); onDone(j); }
-  }, 700);
+  }, 600);
 }
+$("#liveCancel").onclick = async () => { await api("/api/job/cancel", {}); $("#liveCancel").textContent = "Cancelando…"; };
 async function startJob(path, body, onDone, bar, info) {
   try { await api(path, body); watch(onDone, bar, info); }
   catch (e) { toast(e.message); }
@@ -535,42 +533,6 @@ $("#namesApply").onclick = () => {
   applyOps(ops, () => $("#namesScan").click());
 };
 
-// ---------------------------------------------------------------- saltos
-$("#seekScan").onclick = () => {
-  if (needFolders()) return;
-  startJob("/api/seek/scan", {folders: state.settings.folders.map((f) => f.path)}, (j) => {
-    seekFiles = (j.result && j.result.affected) || [];
-    $("#seekCard").hidden = false;
-    $("#seekList").innerHTML = seekFiles.length ? seekFiles.map((f, i) =>
-      `<label class="op"><input type="checkbox" data-seek="${i}" checked><div class="to">${esc(rel(f))}</div></label>`).join("")
-      : '<p class="ok">Ningún MKV afectado.</p>';
-    $("#seekInfo").textContent = `Revisados ${j.result ? j.result.checked : 0}, afectados ${seekFiles.length}`;
-  }, "#seekBar", "#seekInfo");
-};
-$("#seekCancel").onclick = () => api("/api/job/cancel", {});
-$("#seekAll").onchange = (e) => document.querySelectorAll("[data-seek]").forEach((c) => c.checked = e.target.checked);
-function seekSelected() {
-  let files = [...document.querySelectorAll("[data-seek]:checked")].map((c) => seekFiles[+c.dataset.seek]);
-  const lim = +$("#seekLimit").value; if (lim > 0) files = files.slice(0, lim);
-  return files;
-}
-function seekRun(dry) {
-  const files = seekSelected();
-  if (!files.length) return toast("No hay nada seleccionado");
-  if (!dry && !confirm(`¿Arreglar ${files.length} archivos? Los originales irán al respaldo.`)) return;
-  startJob("/api/seek/fix", {files, dry_run: dry}, (j) => {
-    const c = j.result || {};
-    toast((c.stopped ? `PARADO (${c.stopped}) · ` : "") + `ok=${c.ok || 0} simulados=${c["dry-run"] || 0} omitidos=${c.skip || 0} errores=${c.error || 0}`);
-    $("#seekInfo").textContent = j.lines.slice(-1)[0] || "";
-  }, "#seekBar", "#seekInfo");
-}
-$("#seekDry").onclick = () => seekRun(true);
-$("#seekFix").onclick = () => seekRun(false);
-$("#seekRestore").onclick = () => {
-  if (!confirm("¿Devolver todos los originales del respaldo a su sitio?")) return;
-  startJob("/api/seek/restore", {}, (j) => toast(`Restaurados ${(j.result || {}).restored || 0}`), "#seekBar", "#seekInfo");
-};
-
 // ---------------------------------------------------------------- registros
 async function loadLogs() {
   const logs = await api("/api/logs");
@@ -650,9 +612,13 @@ async function loadBackup() {
     const b = await api("/api/seek/backup");
     $("#bkInfo").textContent = b.files ? `${b.files} originales guardados, ${(b.size / 1e9).toFixed(1)} GB en ${b.path}`
       : `Vacío (${b.path})`;
-    $("#bkEmpty").disabled = !b.files;
+    $("#bkEmpty").disabled = !b.files; $("#bkRestore").disabled = !b.files;
   } catch (e) { $("#bkInfo").textContent = e.message; }
 }
+$("#bkRestore").onclick = () => {
+  if (!confirm("¿Devolver los originales del respaldo a su sitio? Reemplaza a los arreglados.")) return;
+  startJob("/api/seek/restore", {}, (j) => { toast(`Restaurados ${(j.result || {}).restored || 0}`); loadBackup(); }, null, "#bkInfo");
+};
 $("#bkEmpty").onclick = async () => {
   if (!confirm("¿Borrar para siempre los originales del respaldo? Ya no se podrán restaurar.")) return;
   try { const r = await api("/api/seek/backup/empty", {}); toast(`Borrados ${r.files} archivos (${(r.size / 1e9).toFixed(1)} GB)`); }

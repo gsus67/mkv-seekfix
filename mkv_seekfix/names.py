@@ -21,7 +21,7 @@ import subprocess
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Callable, Iterable, Optional
 
 VIDEO_EXT = {".mkv", ".mp4", ".avi", ".m4v", ".ts", ".mov", ".wmv"}
 SIDE_EXT = {".srt", ".ass", ".ssa", ".sub", ".idx", ".vtt", ".nfo"}
@@ -187,10 +187,15 @@ def _add_rename(plan: Plan, src: Path, dst: Path, reason: str, group: str,
             plan.ops.append(Op(str(side), str(sdst), "rename", "acompaña al video", group))
 
 
-def plan_series(root: Path, ffprobe: Optional[list[str]] = None) -> Plan:
+Progress = Callable[[str, int, int], None]  # (que se esta revisando, hechos, total)
+
+
+def plan_series(root: Path, ffprobe: Optional[list[str]] = None,
+                progress: Optional[Progress] = None) -> Plan:
     """Revisa una biblioteca de series/anime (una carpeta por serie). Con
     ffprobe, en las temporadas con huecos avisa de archivos que duran el doble
-    (pueden traer dos episodios)."""
+    (pueden traer dos episodios). progress(nombre, hechos, total) se llama antes
+    de revisar cada serie y puede lanzar InterruptedError para cancelar."""
     root = Path(root)
     plan = Plan()
     taken: set[str] = set()
@@ -198,8 +203,14 @@ def plan_series(root: Path, ffprobe: Optional[list[str]] = None) -> Plan:
         if f.is_file() and not f.name.startswith("."):
             plan.issues.append(Issue(str(f), "archivo suelto en la raiz",
                                      "debe ir dentro de la carpeta de una serie"))
-    for show_dir in sorted(p for p in root.iterdir() if p.is_dir() and not p.name.startswith((".", "#", "@"))):
-        _plan_show(plan, show_dir, taken, ffprobe)
+    shows = sorted(p for p in root.iterdir() if p.is_dir() and not p.name.startswith((".", "#", "@")))
+    for i, show_dir in enumerate(shows):
+        if progress:
+            progress(show_dir.name, i, len(shows))
+        _plan_show(plan, show_dir, taken, ffprobe,
+                   (lambda text, i=i: progress(text, i, len(shows))) if progress else None)
+    if progress:
+        progress("", len(shows), len(shows))
     return plan
 
 
@@ -217,7 +228,8 @@ def _long_files(ffprobe: list[str], files: list[Path]) -> list[tuple[str, int]]:
 
 
 def _plan_show(plan: Plan, show_dir: Path, taken: set[str],
-               ffprobe: Optional[list[str]] = None) -> None:
+               ffprobe: Optional[list[str]] = None,
+               note: Optional[Callable[[str], None]] = None) -> None:
     show = show_name(show_dir.name)
     group = show_dir.name
     # (archivo, temporada de su carpeta, carpeta es raiz de la serie)
@@ -314,6 +326,8 @@ def _plan_show(plan: Plan, show_dir: Path, taken: set[str],
                 # Los ya nombrados como dobles (E026-E027) cuentan como dos: no se avisa.
                 files = [p for p, fs, _, e2 in good_files if fs == s and not e2] + \
                         [p for p, g, _ in guesses if g.season == s and not g.episode_end]
+                if note:
+                    note(f"{show_dir.name} · midiendo la duración de {len(files)} archivos (temporada {s})")
                 long = _long_files(ffprobe, files)
                 if long:
                     hint += "; ojo, duran el doble y pueden traer dos episodios: " + \
@@ -527,7 +541,8 @@ def _movie_files(root: Path) -> list[tuple[Path, Optional[Path]]]:
     return out
 
 
-def plan_movies(root: Path, ffprobe: Optional[list[str]] = None) -> Plan:
+def plan_movies(root: Path, ffprobe: Optional[list[str]] = None,
+                progress: Optional[Progress] = None) -> Plan:
     """Revisa una biblioteca de peliculas. Con ffprobe compara duplicados y da
     la duracion de las que no tienen año (ayuda a saber que version es)."""
     root = Path(root)
@@ -538,7 +553,9 @@ def plan_movies(root: Path, ffprobe: Optional[list[str]] = None) -> Plan:
     for _, folder in files:
         if folder:
             per_folder[folder] = per_folder.get(folder, 0) + 1
-    for video, folder in files:
+    for n, (video, folder) in enumerate(files):
+        if progress:
+            progress(video.name, n, len(files))
         # Una carpeta con varias peliculas (una coleccion): cada archivo es la suya.
         if folder and per_folder[folder] > 1:
             folder = None

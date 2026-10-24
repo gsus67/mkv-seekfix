@@ -56,6 +56,10 @@ class Config:
         return p
 
 
+def rel_name(p: Path) -> str:
+    return p.name or str(p)
+
+
 class Job:
     """Una tarea en segundo plano con progreso y registro de lineas."""
 
@@ -69,6 +73,8 @@ class Job:
         self.result = None
         self.error = ""
         self.cancel = False
+        self.step = ""      # fase actual: "anime · nombres"
+        self.current = ""   # lo que se esta revisando ahora mismo
         self.started = time.time()
 
     def log(self, msg: str) -> None:
@@ -77,6 +83,7 @@ class Job:
 
     def to_dict(self) -> dict:
         return {"id": self.id, "kind": self.kind, "running": self.running, "done": self.done,
+                "step": self.step, "current": self.current, "elapsed": int(time.time() - self.started),
                 "total": self.total, "lines": self.lines[-200:], "result": self.result,
                 "error": self.error}
 
@@ -111,30 +118,52 @@ class App:
         ffprobe = self.cfg.tools.ffprobe
 
         def fn(job: Job):
-            job.total = len(checked)
             out = {"ops": [], "issues": [], "shows": []}
             key = self.cfg.settings.get("tmdb_key", "")
             client = tmdb.Tmdb(key, self.cfg.settings.get("tmdb_language", "es-ES")) if key else None
-            for root, kind in checked:
-                job.log(f"Revisando {root} ({kind})")
-                plan = names.plan_movies(root, ffprobe) if kind == "movies" else names.plan_series(root, ffprobe)
-                if client and plan.shows:
-                    job.log(f"  Comparando {len(plan.shows)} series con TMDB")
-                    for show in plan.shows:
-                        plan.issues += self._tmdb_missing(client, show)
-                plan.issues += self._mkv_without_index(job, root, kind)
-                d = plan.to_dict()
-                for item in d["ops"] + d["issues"]:
-                    item["root"] = str(root)
-                for show in d["shows"]:
-                    show["root"], show["group"] = str(root), show["folder"]
-                out["ops"] += d["ops"]
-                out["issues"] += d["issues"]
-                out["shows"] += d["shows"]
-                job.done += 1
-                job.log(f"  {len(plan.ops)} cambios propuestos, {len(plan.issues)} avisos")
+            phases = 3 if client else 2
+            job.total = 1000
+            n_roots = len(checked)
+
+            def tick(r: int, phase: int, label: str, current: str, i: int, n: int):
+                """Barra global: cada biblioteca tiene `phases` fases del mismo peso."""
+                if job.cancel:
+                    raise InterruptedError
+                inner = (i / n) if n else 1.0
+                job.done = int(1000 * ((r * phases + phase + inner) / (n_roots * phases)))
+                job.step = f"{rel_name(checked[r][0])} · fase {phase + 1}/{phases}: {label}"
+                job.current = f"{current}  ({i}/{n})" if current else ""
+
+            try:
+                for r, (root, kind) in enumerate(checked):
+                    job.log(f"Revisando {root} ({kind})")
+                    prog = lambda name, i, n, r=r: tick(r, 0, "nombres y episodios", name, i, n)
+                    plan = (names.plan_movies(root, ffprobe, prog) if kind == "movies"
+                            else names.plan_series(root, ffprobe, prog))
+                    job.log(f"  Nombres revisados: {len(plan.ops)} cambios propuestos")
+                    if client and plan.shows:
+                        for i, show in enumerate(plan.shows):
+                            tick(r, 1, "comparando con TMDB", show["show"], i, len(plan.shows))
+                            plan.issues += self._tmdb_missing(client, show)
+                        job.log(f"  Comparadas {len(plan.shows)} series con TMDB")
+                    plan.issues += self._mkv_without_index(
+                        job, root, kind, lambda name, i, n, r=r: tick(r, phases - 1, "MKV sin índice de saltos", name, i, n))
+                    d = plan.to_dict()
+                    for item in d["ops"] + d["issues"]:
+                        item["root"] = str(root)
+                    for show in d["shows"]:
+                        show["root"], show["group"] = str(root), show["folder"]
+                    out["ops"] += d["ops"]
+                    out["issues"] += d["issues"]
+                    out["shows"] += d["shows"]
+                    job.log(f"  Listo {root.name}: {len(plan.ops)} cambios, {len(plan.issues)} avisos")
+            except InterruptedError:
+                job.log("Escaneo cancelado")
+                job.current = ""
+                return None
             for i, op in enumerate(out["ops"]):
                 op["id"] = i
+            job.done, job.step, job.current = 1000, "Terminado", ""
             return out
         return self.start("names-scan", fn)
 
@@ -233,6 +262,7 @@ class App:
             for f in files:
                 if job.cancel:
                     break
+                job.step, job.current = "Buscando MKV sin índice de saltos", f"{f.name}  ({job.done + 1}/{len(files)})"
                 try:
                     if not core.has_front_cues(f):
                         bad.append(str(f))
@@ -260,6 +290,8 @@ class App:
                     counts["stopped"] = f"queda menos de {min_free_gb:g} GB libres en el disco"
                     job.log(f"PARADO: {counts['stopped']}")
                     break
+                job.step = "Simulando" if dry_run else "Arreglando MKV (tarda lo que tarda copiar cada archivo)"
+                job.current = f"{f.name}  ({job.done + 1}/{len(paths)})"
                 res = core.fix_file(self.cfg.tools, f, backup, dry_run=dry_run)
                 counts[res.status] += 1
                 job.done += 1
@@ -268,12 +300,15 @@ class App:
         return self.start("seek-fix", fn)
 
     @staticmethod
-    def _mkv_without_index(job: Job, root: Path, kind: str) -> list[names.Issue]:
+    def _mkv_without_index(job: Job, root: Path, kind: str, tick=None) -> list[names.Issue]:
         """MKV sin indice de saltos al frente, agrupados por serie (o juntos en
         peliculas), para mostrarlos en la ficha con su boton de arreglar."""
         by_group: dict[str, list[str]] = {}
         checked = 0
-        for f in core.find_mkv([root]):
+        files = list(core.find_mkv([root]))
+        for f in files:
+            if tick:
+                tick(f.name, checked, len(files))
             try:
                 if core.has_front_cues(f):
                     continue
