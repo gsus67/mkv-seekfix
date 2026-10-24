@@ -1,7 +1,8 @@
-__pycache__/
-*.egg-info/
 build/
+config/
 dist/
-.venv/
-*.seekfix-tmp
+*.egg-info/
 logs/
+__pycache__/
+*.seekfix-tmp
+.venv/

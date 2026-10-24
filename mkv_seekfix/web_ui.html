@@ -1,0 +1,459 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MKV Seekfix</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #677085; --line: #dfe3ea;
+  --accent: #2f6fde; --accent-text: #ffffff; --ok: #1f8a4c; --warn: #b7791f; --bad: #c53030;
+  --chip: #eef2f8;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12151b; --panel: #1b2029; --text: #e6e9ef; --muted: #98a1b3; --line: #2c3340;
+    --accent: #5b8ff0; --accent-text: #0d1117; --ok: #49c27e; --warn: #e0a84a; --bad: #f07171;
+    --chip: #252c38;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { display: flex; align-items: center; gap: 16px; padding: 12px 16px;
+  background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+header h1 { font-size: 17px; margin: 0; }
+nav { display: flex; gap: 4px; flex-wrap: wrap; }
+nav button { background: none; border: 0; color: var(--muted); padding: 8px 12px; border-radius: 8px;
+  font: inherit; cursor: pointer; }
+nav button.on { background: var(--chip); color: var(--text); font-weight: 600; }
+main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+section { display: none; } section.on { display: block; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px;
+  margin-bottom: 16px; }
+.card h2 { font-size: 15px; margin: 0 0 10px; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+button.b { background: var(--chip); color: var(--text); border: 1px solid var(--line); border-radius: 8px;
+  padding: 7px 12px; font: inherit; cursor: pointer; }
+button.b.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+button.b.danger { color: var(--bad); }
+button.b:disabled { opacity: .5; cursor: default; }
+input, select { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line);
+  border-radius: 8px; padding: 6px 8px; }
+input[type=text], input[type=password] { min-width: 0; flex: 1; }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+ul.plain { list-style: none; margin: 0; padding: 0; }
+.folder { display: flex; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line);
+  flex-wrap: wrap; }
+.folder .p { flex: 1; min-width: 180px; word-break: break-all; }
+.group { margin: 12px 0 4px; font-weight: 600; word-break: break-word; }
+.op { display: grid; grid-template-columns: 22px 1fr; gap: 6px; padding: 5px 0;
+  border-bottom: 1px dashed var(--line); font-size: 13px; }
+.op .from { color: var(--muted); word-break: break-all; }
+.op .to { word-break: break-all; }
+.tag { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 99px; background: var(--chip);
+  color: var(--muted); margin-left: 4px; }
+.tag.trash { color: var(--bad); }
+.issue { padding: 8px 0; border-bottom: 1px dashed var(--line); font-size: 13px; }
+.issue .p { word-break: break-all; }
+.issue .prob { color: var(--warn); font-weight: 600; }
+.progress { height: 6px; background: var(--chip); border-radius: 99px; overflow: hidden; margin: 8px 0; }
+.progress > div { height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+pre.log { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px;
+  max-height: 220px; overflow: auto; font-size: 12px; margin: 8px 0 0; white-space: pre-wrap; }
+dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--text);
+  width: min(560px, calc(100vw - 32px)); padding: 16px; }
+dialog::backdrop { background: rgb(0 0 0 / .45); }
+.dirs { max-height: 50vh; overflow: auto; margin: 8px 0; border: 1px solid var(--line); border-radius: 8px; }
+.dirs button { display: block; width: 100%; text-align: left; background: none; border: 0;
+  border-bottom: 1px solid var(--line); color: var(--text); padding: 8px 10px; font: inherit; cursor: pointer; }
+.dirs button:hover { background: var(--chip); }
+.ok { color: var(--ok); } .bad { color: var(--bad); }
+label.chk { display: inline-flex; gap: 6px; align-items: center; }
+.toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--text);
+  color: var(--bg); padding: 8px 14px; border-radius: 8px; display: none; max-width: calc(100vw - 32px); }
+</style>
+</head>
+<body>
+<header>
+  <h1>MKV Seekfix</h1>
+  <nav>
+    <button data-tab="carpetas" class="on">Carpetas</button>
+    <button data-tab="nombres">Nombres</button>
+    <button data-tab="saltos">Saltos MKV</button>
+    <button data-tab="registros">Registros</button>
+    <button data-tab="ajustes">Ajustes</button>
+  </nav>
+</header>
+<main>
+
+<section id="carpetas" class="on">
+  <div class="card">
+    <h2>Carpetas a revisar</h2>
+    <p class="muted small">Elige las carpetas de tu biblioteca y di qué contiene cada una. Se usan en
+      <b>Nombres</b> y en <b>Saltos MKV</b>.</p>
+    <ul class="plain" id="folders"></ul>
+    <div class="row" style="margin-top:10px">
+      <button class="b primary" id="addFolder">Añadir carpeta</button>
+    </div>
+  </div>
+</section>
+
+<section id="nombres">
+  <div class="card">
+    <h2>Revisar nombres para Jellyfin</h2>
+    <p class="muted small">Series y anime: deja cada episodio como <code>Serie - S01E01</code> en su carpeta de
+      temporada. Películas: avisa de las que no tienen año y de las duplicadas. Nada se borra: lo que se
+      quita va a la papelera y todo queda en un registro para deshacer.</p>
+    <div class="row">
+      <button class="b primary" id="namesScan">Escanear carpetas</button>
+      <span class="muted small" id="namesInfo"></span>
+    </div>
+    <div class="progress"><div id="namesBar"></div></div>
+  </div>
+  <div class="card" id="namesOpsCard" hidden>
+    <div class="row" style="justify-content:space-between">
+      <h2>Cambios propuestos</h2>
+      <div class="row">
+        <label class="chk small"><input type="checkbox" id="namesAll" checked> Todos</label>
+        <button class="b primary" id="namesApply">Aplicar seleccionados</button>
+      </div>
+    </div>
+    <div id="namesOps"></div>
+  </div>
+  <div class="card" id="namesIssuesCard" hidden>
+    <h2>Avisos (necesitan tu decisión)</h2>
+    <div id="namesIssues"></div>
+  </div>
+</section>
+
+<section id="saltos">
+  <div class="card">
+    <h2>MKV que no dejan adelantar en la TV</h2>
+    <p class="muted small">Busca los MKV sin índice de saltos al principio y los reempaqueta sin recodificar.
+      El original se guarda en la carpeta de respaldo (Ajustes).</p>
+    <div class="row">
+      <button class="b primary" id="seekScan">Escanear carpetas</button>
+      <button class="b" id="seekCancel">Cancelar</button>
+      <span class="muted small" id="seekInfo"></span>
+    </div>
+    <div class="progress"><div id="seekBar"></div></div>
+  </div>
+  <div class="card" id="seekCard" hidden>
+    <div class="row" style="justify-content:space-between">
+      <h2>Afectados</h2>
+      <div class="row">
+        <label class="chk small"><input type="checkbox" id="seekAll" checked> Todos</label>
+        <label class="small">Máx. <input type="number" id="seekLimit" min="0" value="0" style="width:70px"></label>
+        <button class="b" id="seekDry">Simular</button>
+        <button class="b primary" id="seekFix">Arreglar seleccionados</button>
+      </div>
+    </div>
+    <div id="seekList"></div>
+  </div>
+  <div class="card">
+    <h2>Deshacer</h2>
+    <div class="row">
+      <button class="b danger" id="seekRestore">Restaurar originales del respaldo</button>
+    </div>
+  </div>
+</section>
+
+<section id="registros">
+  <div class="card">
+    <h2>Registros de cambios de nombre</h2>
+    <p class="muted small">Cada vez que aplicas cambios queda un registro. Deshacer devuelve cada archivo a su
+      sitio, del último al primero.</p>
+    <ul class="plain" id="logs"></ul>
+  </div>
+</section>
+
+<section id="ajustes">
+  <div class="card">
+    <h2>Ajustes</h2>
+    <div class="row" style="margin-bottom:8px"><label style="width:150px">Clave de TMDB</label>
+      <input type="password" id="sTmdb" placeholder="clave v3 o token de lectura v4"></div>
+    <p class="muted small" style="margin:0 0 10px 158px">Gratis en themoviedb.org → Ajustes → API. Sirve para
+      proponer el año de las películas comparando la duración.</p>
+    <div class="row" style="margin-bottom:8px"><label style="width:150px">Idioma TMDB</label>
+      <input type="text" id="sLang" style="max-width:120px"></div>
+    <div class="row" style="margin-bottom:8px"><label style="width:150px">Papelera</label>
+      <input type="text" id="sTrash"></div>
+    <div class="row" style="margin-bottom:8px"><label style="width:150px">Respaldo MKV</label>
+      <input type="text" id="sBackup"></div>
+    <button class="b primary" id="sSave">Guardar</button>
+  </div>
+</section>
+
+</main>
+
+<dialog id="picker">
+  <div class="row" style="justify-content:space-between">
+    <b>Elegir carpeta</b>
+    <button class="b" id="pickClose">Cerrar</button>
+  </div>
+  <div class="small muted" id="pickPath" style="margin-top:8px;word-break:break-all"></div>
+  <div class="dirs" id="pickDirs"></div>
+  <div class="row">
+    <select id="pickKind">
+      <option value="series">Series / Anime</option>
+      <option value="movies">Películas</option>
+    </select>
+    <button class="b primary" id="pickUse">Usar esta carpeta</button>
+  </div>
+</dialog>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+let state = {settings: {folders: []}, media_root: "/"};
+let namesPlan = null, seekFiles = [], polling = null;
+
+function toast(msg) {
+  const t = $("#toast"); t.textContent = msg; t.style.display = "block";
+  clearTimeout(t._h); t._h = setTimeout(() => t.style.display = "none", 4000);
+}
+async function api(path, body) {
+  const res = await fetch(path, body === undefined ? {} :
+    {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+const rel = (p) => p.startsWith(state.media_root) ? p.slice(state.media_root.length).replace(/^\//, "") || "/" : p;
+
+// ---------------------------------------------------------------- pestañas
+document.querySelectorAll("nav button").forEach((b) => b.onclick = () => {
+  document.querySelectorAll("nav button").forEach((x) => x.classList.toggle("on", x === b));
+  document.querySelectorAll("section").forEach((s) => s.classList.toggle("on", s.id === b.dataset.tab));
+  if (b.dataset.tab === "registros") loadLogs();
+});
+
+// ---------------------------------------------------------------- carpetas
+async function saveFolders() {
+  await api("/api/settings", {folders: state.settings.folders});
+  renderFolders();
+}
+function renderFolders() {
+  const ul = $("#folders");
+  const fs = state.settings.folders || [];
+  ul.innerHTML = fs.length ? "" : '<li class="muted small">Todavía no hay carpetas.</li>';
+  fs.forEach((f, i) => {
+    const li = document.createElement("li");
+    li.className = "folder";
+    li.innerHTML = `<span class="p">${esc(rel(f.path))}</span>
+      <select><option value="series">Series / Anime</option><option value="movies">Películas</option></select>
+      <button class="b danger">Quitar</button>`;
+    const sel = li.querySelector("select"); sel.value = f.kind;
+    sel.onchange = () => { f.kind = sel.value; saveFolders(); };
+    li.querySelector("button").onclick = () => { fs.splice(i, 1); saveFolders(); };
+    ul.appendChild(li);
+  });
+}
+let pickCur = "";
+async function pickGo(path) {
+  try {
+    const d = await api("/api/browse?path=" + encodeURIComponent(path));
+    pickCur = d.path;
+    $("#pickPath").textContent = d.path;
+    const box = $("#pickDirs"); box.innerHTML = "";
+    if (d.parent) { const b = document.createElement("button"); b.textContent = "⬑ Subir"; b.onclick = () => pickGo(d.parent); box.appendChild(b); }
+    d.dirs.forEach((n) => { const b = document.createElement("button"); b.textContent = "📁 " + n; b.onclick = () => pickGo(d.path + "/" + n); box.appendChild(b); });
+    if (!d.dirs.length) box.insertAdjacentHTML("beforeend", '<div class="muted small" style="padding:8px">Sin subcarpetas</div>');
+  } catch (e) { toast(e.message); }
+}
+$("#addFolder").onclick = () => { $("#picker").showModal(); pickGo(state.media_root); };
+$("#pickClose").onclick = () => $("#picker").close();
+$("#pickUse").onclick = () => {
+  const fs = state.settings.folders = state.settings.folders || [];
+  if (!fs.some((f) => f.path === pickCur)) fs.push({path: pickCur, kind: $("#pickKind").value});
+  $("#picker").close(); saveFolders();
+};
+function needFolders() {
+  if (!(state.settings.folders || []).length) { toast("Primero añade carpetas en la pestaña Carpetas"); return true; }
+  return false;
+}
+
+// ---------------------------------------------------------------- tareas
+function watch(onDone, bar, info) {
+  clearInterval(polling);
+  polling = setInterval(async () => {
+    const j = await api("/api/job");
+    if (!j) return;
+    if (bar) $(bar).style.width = j.total ? (100 * j.done / j.total) + "%" : (j.running ? "30%" : "100%");
+    if (info) $(info).textContent = j.running ? `${j.done}/${j.total || "?"} …` : (j.error ? "Error: " + j.error : "Terminado");
+    if (!j.running) { clearInterval(polling); onDone(j); }
+  }, 700);
+}
+async function startJob(path, body, onDone, bar, info) {
+  try { await api(path, body); watch(onDone, bar, info); }
+  catch (e) { toast(e.message); }
+}
+
+// ---------------------------------------------------------------- nombres
+$("#namesScan").onclick = () => {
+  if (needFolders()) return;
+  startJob("/api/names/scan", {folders: state.settings.folders}, (j) => {
+    if (j.result) { namesPlan = j.result; renderNames(); }
+  }, "#namesBar", "#namesInfo");
+};
+function groupBy(items) {
+  const m = new Map();
+  items.forEach((x) => { const k = x.group || "Otros"; if (!m.has(k)) m.set(k, []); m.get(k).push(x); });
+  return m;
+}
+function renderNames() {
+  const {ops, issues} = namesPlan;
+  $("#namesOpsCard").hidden = false;
+  $("#namesIssuesCard").hidden = !issues.length;
+  const box = $("#namesOps");
+  box.innerHTML = ops.length ? "" : '<p class="ok">Todo en orden: no hay cambios que proponer.</p>';
+  for (const [g, list] of groupBy(ops)) {
+    box.insertAdjacentHTML("beforeend", `<div class="group">${esc(g)} <span class="tag">${list.length}</span></div>`);
+    list.forEach((o) => {
+      const to = o.kind === "trash" ? '<span class="tag trash">a la papelera</span>' :
+        esc(o.dst.split("/").slice(-2).join("/"));
+      box.insertAdjacentHTML("beforeend", `<label class="op"><input type="checkbox" data-op="${o.id}" checked>
+        <div><div class="from">${esc(rel(o.src))}</div><div class="to">→ ${to} <span class="tag">${esc(o.reason)}</span></div></div></label>`);
+    });
+  }
+  const ib = $("#namesIssues"); ib.innerHTML = "";
+  issues.forEach((it, k) => {
+    const d = document.createElement("div"); d.className = "issue";
+    let extra = "";
+    if (it.problem === "pelicula sin año") {
+      const dur = it.data.duration_min ? ` · dura ${it.data.duration_min} min` : "";
+      extra = `<div class="row" style="margin-top:6px">
+        <span class="small muted">«${esc(it.data.title)}»${dur}</span>
+        <input type="number" placeholder="año" min="1900" max="2100" style="width:90px">
+        <button class="b" data-a="tmdb">Buscar en TMDB</button>
+        <button class="b primary" data-a="year">Renombrar</button></div><div class="small muted" data-r></div>`;
+    } else if (it.problem === "pelicula duplicada" && it.data.files) {
+      extra = it.data.files.map((f) => `<div class="row" style="margin-top:6px">
+        <span class="p small" style="flex:1">${esc(rel(f.path))}<br><span class="muted">${esc(f.info)}</span></span>
+        <button class="b danger" data-trash="${esc(f.path)}">A la papelera</button></div>`).join("");
+    }
+    d.innerHTML = `<div class="prob">${esc(it.problem)}</div><div class="p">${esc(rel(it.path))}</div>
+      <div class="muted small">${esc(it.hint)}</div>${extra}`;
+    const yearIn = d.querySelector("input[type=number]");
+    d.querySelectorAll("button[data-a=tmdb]").forEach((b) => b.onclick = async () => {
+      const out = d.querySelector("[data-r]"); out.textContent = "Buscando…";
+      try {
+        const r = await api("/api/names/tmdb", {title: it.data.title, duration_min: it.data.duration_min || 0});
+        if (r.best) yearIn.value = r.best.year;
+        out.innerHTML = (r.best ? `<span class="ok">Propuesto ${r.best.year}: ${esc(r.why)}</span>` : `<span class="bad">${esc(r.why)}</span>`)
+          + "<br>" + r.candidates.map((c) => esc(c.label)).join(" · ");
+      } catch (e) { out.textContent = e.message; }
+    });
+    d.querySelectorAll("button[data-a=year]").forEach((b) => b.onclick = async () => {
+      if (!yearIn.value) return toast("Escribe el año");
+      try {
+        const r = await api("/api/names/year", {path: it.path, root: it.root, year: +yearIn.value});
+        applyOps(r.ops, () => d.remove());
+      } catch (e) { toast(e.message); }
+    });
+    d.querySelectorAll("button[data-trash]").forEach((b) => b.onclick = () => {
+      if (!confirm("¿Mover a la papelera?\n" + b.dataset.trash)) return;
+      applyOps([{src: b.dataset.trash, dst: "", kind: "trash", reason: "elegido a mano", group: it.group}], () => d.remove());
+    });
+    ib.appendChild(d);
+  });
+}
+$("#namesAll").onchange = (e) => document.querySelectorAll("[data-op]").forEach((c) => c.checked = e.target.checked);
+function applyOps(ops, after) {
+  startJob("/api/names/apply", {ops}, (j) => {
+    const r = j.result || {results: []};
+    const bad = r.results.filter((x) => x.status !== "ok").length;
+    toast(`Aplicados ${r.results.length - bad}` + (bad ? `, ${bad} con error` : "") + (r.log ? ` · registro ${r.log}` : ""));
+    if (after) after(j);
+  }, "#namesBar", "#namesInfo");
+}
+$("#namesApply").onclick = () => {
+  if (!namesPlan) return;
+  const ids = new Set([...document.querySelectorAll("[data-op]:checked")].map((c) => +c.dataset.op));
+  const ops = namesPlan.ops.filter((o) => ids.has(o.id));
+  if (!ops.length) return toast("No hay nada seleccionado");
+  if (!confirm(`¿Aplicar ${ops.length} cambios?`)) return;
+  applyOps(ops, () => $("#namesScan").click());
+};
+
+// ---------------------------------------------------------------- saltos
+$("#seekScan").onclick = () => {
+  if (needFolders()) return;
+  startJob("/api/seek/scan", {folders: state.settings.folders.map((f) => f.path)}, (j) => {
+    seekFiles = (j.result && j.result.affected) || [];
+    $("#seekCard").hidden = false;
+    $("#seekList").innerHTML = seekFiles.length ? seekFiles.map((f, i) =>
+      `<label class="op"><input type="checkbox" data-seek="${i}" checked><div class="to">${esc(rel(f))}</div></label>`).join("")
+      : '<p class="ok">Ningún MKV afectado.</p>';
+    $("#seekInfo").textContent = `Revisados ${j.result ? j.result.checked : 0}, afectados ${seekFiles.length}`;
+  }, "#seekBar", "#seekInfo");
+};
+$("#seekCancel").onclick = () => api("/api/job/cancel", {});
+$("#seekAll").onchange = (e) => document.querySelectorAll("[data-seek]").forEach((c) => c.checked = e.target.checked);
+function seekSelected() {
+  let files = [...document.querySelectorAll("[data-seek]:checked")].map((c) => seekFiles[+c.dataset.seek]);
+  const lim = +$("#seekLimit").value; if (lim > 0) files = files.slice(0, lim);
+  return files;
+}
+function seekRun(dry) {
+  const files = seekSelected();
+  if (!files.length) return toast("No hay nada seleccionado");
+  if (!dry && !confirm(`¿Arreglar ${files.length} archivos? Los originales irán al respaldo.`)) return;
+  startJob("/api/seek/fix", {files, dry_run: dry}, (j) => {
+    const c = j.result || {};
+    toast(`ok=${c.ok || 0} simulados=${c["dry-run"] || 0} omitidos=${c.skip || 0} errores=${c.error || 0}`);
+    $("#seekInfo").textContent = j.lines.slice(-1)[0] || "";
+  }, "#seekBar", "#seekInfo");
+}
+$("#seekDry").onclick = () => seekRun(true);
+$("#seekFix").onclick = () => seekRun(false);
+$("#seekRestore").onclick = () => {
+  if (!confirm("¿Devolver todos los originales del respaldo a su sitio?")) return;
+  startJob("/api/seek/restore", {}, (j) => toast(`Restaurados ${(j.result || {}).restored || 0}`), "#seekBar", "#seekInfo");
+};
+
+// ---------------------------------------------------------------- registros
+async function loadLogs() {
+  const logs = await api("/api/logs");
+  const ul = $("#logs");
+  ul.innerHTML = logs.length ? "" : '<li class="muted small">No hay registros.</li>';
+  logs.forEach((l) => {
+    const li = document.createElement("li"); li.className = "folder";
+    li.innerHTML = `<span class="p">${esc(l.name)} <span class="tag">${l.entries} cambios</span></span>
+      <button class="b danger">Deshacer</button>`;
+    li.querySelector("button").onclick = () => {
+      if (!confirm("¿Deshacer " + l.name + "?")) return;
+      startJob("/api/names/undo", {log: l.name}, (j) => { toast("Deshecho"); loadLogs(); });
+    };
+    ul.appendChild(li);
+  });
+}
+
+// ---------------------------------------------------------------- ajustes
+$("#sSave").onclick = async () => {
+  try {
+    await api("/api/settings", {tmdb_key: $("#sTmdb").value, tmdb_language: $("#sLang").value,
+      trash_dir: $("#sTrash").value, backup_dir: $("#sBackup").value});
+    toast("Guardado");
+  } catch (e) { toast(e.message); }
+};
+
+(async () => {
+  state = await api("/api/state");
+  const s = state.settings;
+  $("#sTmdb").value = s.tmdb_key; $("#sLang").value = s.tmdb_language;
+  $("#sTrash").value = s.trash_dir; $("#sBackup").value = s.backup_dir;
+  renderFolders();
+  const tab = document.querySelector(`nav button[data-tab="${location.hash.slice(1)}"]`);
+  if (tab) tab.click();
+  const j = state.job;
+  if (j && j.kind === "names-scan" && !j.running && j.result) { namesPlan = j.result; renderNames(); }
+  if (j && j.running) watch(() => {}, null, null);
+})();
+</script>
+</body>
+</html>
