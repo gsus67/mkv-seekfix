@@ -85,6 +85,7 @@ label.chk { display: inline-flex; gap: 6px; align-items: center; }
     <button data-tab="registros">Registros</button>
     <button data-tab="ajustes">Ajustes</button>
   </nav>
+  <button class="b primary small" id="updBadge" hidden>Actualización disponible</button>
 </header>
 <main>
 
@@ -170,6 +171,17 @@ label.chk { display: inline-flex; gap: 6px; align-items: center; }
 </section>
 
 <section id="ajustes">
+  <div class="card">
+    <h2>Actualización</h2>
+    <p class="small" id="updInfo">Comprobando…</p>
+    <div class="row">
+      <button class="b" id="updCheck">Buscar actualizaciones</button>
+      <button class="b primary" id="updRun">Actualizar ahora</button>
+    </div>
+    <p class="muted small">Descarga lo último de GitHub, reconstruye, reinicia y borra la imagen anterior. La página
+      se queda sin conexión un momento mientras se reinicia.</p>
+    <pre class="log" id="updLog" hidden></pre>
+  </div>
   <div class="card">
     <h2>Ajustes</h2>
     <div class="row" style="margin-bottom:8px"><label style="width:150px">Clave de TMDB</label>
@@ -443,8 +455,57 @@ $("#sSave").onclick = async () => {
   } catch (e) { toast(e.message); }
 };
 
+// ---------------------------------------------------------------- actualizar
+let ver = null;
+async function loadVersion(refresh) {
+  try {
+    ver = await api("/api/version" + (refresh ? "?refresh=1" : ""));
+  } catch (e) { $("#updInfo").textContent = e.message; return; }
+  let txt = `Versión instalada: ${ver.current || "desconocida"}`;
+  if (ver.latest) txt += ` · última en GitHub: ${ver.latest}` + (ver.message ? ` (${ver.message})` : "");
+  if (ver.error) txt += ` · ${ver.error}`;
+  if (!ver.can_update) txt += ` · No se puede actualizar desde aquí: ${ver.why}`;
+  else if (ver.latest && !ver.update_available && ver.current) txt += " · Está al día.";
+  $("#updInfo").textContent = txt;
+  $("#updRun").disabled = !ver.can_update;
+  $("#updBadge").hidden = !(ver.update_available && ver.can_update);
+}
+$("#updBadge").onclick = () => document.querySelector('nav button[data-tab="ajustes"]').click();
+$("#updCheck").onclick = () => loadVersion(true);
+$("#updRun").onclick = async () => {
+  if (!confirm("¿Actualizar ahora? La página se reiniciará.")) return;
+  try { await api("/api/update", {}); } catch (e) { return toast(e.message); }
+  const target = ver && ver.latest;
+  $("#updLog").hidden = false;
+  $("#updLog").textContent = "Arrancando la actualización…";
+  $("#updRun").disabled = true;
+  const t0 = Date.now();
+  const timer = setInterval(async () => {
+    try {
+      const l = await api("/api/update/log");
+      if (l.lines.length) { $("#updLog").textContent = l.lines.join("\n"); $("#updLog").scrollTop = 1e9; }
+      const fin = l.lines.find((x) => x.startsWith("== FIN codigo"));
+      if (fin && !l.running) {
+        clearInterval(timer);
+        if (fin.endsWith(" 0")) {
+          const v = await api("/api/version?refresh=1");
+          toast("Actualizado a " + (v.current || target));
+          setTimeout(() => location.reload(), 1500);
+        } else {
+          toast("La actualización falló: mira el registro");
+          $("#updRun").disabled = false;
+        }
+      }
+    } catch (e) {
+      $("#updInfo").textContent = "Reiniciando… (la página volverá sola)";
+    }
+    if (Date.now() - t0 > 20 * 60 * 1000) { clearInterval(timer); toast("La actualización tarda demasiado"); }
+  }, 2000);
+};
+
 (async () => {
   state = await api("/api/state");
+  loadVersion(false);
   const s = state.settings;
   $("#sTmdb").value = s.tmdb_key; $("#sLang").value = s.tmdb_language;
   $("#sTrash").value = s.trash_dir; $("#sBackup").value = s.backup_dir;

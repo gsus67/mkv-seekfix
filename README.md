@@ -30,7 +30,14 @@ Se abre en `http://IP-DEL-SERVIDOR:8765`.
 
 ### Actualizar
 
-El mismo comando:
+Desde la web: **Ajustes → Actualización → Actualizar ahora** (arriba aparece
+un aviso cuando hay versión nueva). Lanza un contenedor `docker:cli` temporal
+que ejecuta `actualizar.sh`; al terminar se borra el contenedor y su imagen.
+Necesita el socket de Docker y `MKV_SEEKFIX_HOST_DIR` del compose de ejemplo.
+Con el socket montado la web controla el servidor: **pon contraseña**
+(`MKV_SEEKFIX_PASSWORD`).
+
+O a mano, en la carpeta del compose:
 
 ```
 sh actualizar.sh

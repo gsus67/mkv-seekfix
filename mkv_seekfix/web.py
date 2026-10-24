@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Callable, Optional
 from urllib.parse import parse_qs, urlparse
 
-from . import core, names, tmdb
+from . import core, names, tmdb, updater
 
 UI_FILE = Path(__file__).with_name("web_ui.html")
 
@@ -271,6 +271,34 @@ class App:
             return {"restored": sum(r.status == "ok" for r in res)}
         return self.start("seek-restore", fn)
 
+    # ------------------------------------------------------------ actualizar
+
+    def version(self, refresh: bool = False) -> dict:
+        cur = updater.current_version()
+        ok, why = updater.can_update()
+        out = {"current": cur[:7], "can_update": ok, "why": why, "latest": "", "message": "",
+               "update_available": False, "error": ""}
+        try:
+            latest = updater.latest_version(0 if refresh else 600)
+            out.update(latest=latest["sha"][:7], message=latest["msg"], date=latest["date"],
+                       update_available=bool(cur) and latest["sha"] != cur)
+        except updater.UpdateError as exc:
+            out["error"] = str(exc)
+        return out
+
+    def update_log(self) -> dict:
+        log = self.cfg.config_dir / "update.log"
+        try:
+            lines = log.read_text(encoding="utf-8", errors="replace").splitlines()[-80:]
+        except OSError:
+            lines = []
+        running = False
+        try:
+            running = updater.can_update()[0] and updater.helper_running()
+        except updater.UpdateError:
+            pass
+        return {"lines": lines, "running": running}
+
     # ------------------------------------------------------------ carpetas
 
     def browse(self, path: str) -> dict:
@@ -335,6 +363,10 @@ def make_handler(app: App):
                     self._json(app.browse(q.get("path", "")))
                 elif url.path == "/api/logs":
                     self._json(app.logs())
+                elif url.path == "/api/version":
+                    self._json(app.version(q.get("refresh") == "1"))
+                elif url.path == "/api/update/log":
+                    self._json(app.update_log())
                 else:
                     self._json({"error": "no existe"}, 404)
             except (ValueError, OSError) as exc:
@@ -372,13 +404,19 @@ def make_handler(app: App):
                                             float(body.get("min_free_gb", 50))).to_dict())
                 elif path == "/api/seek/restore":
                     self._json(app.seek_restore().to_dict())
+                elif path == "/api/update":
+                    if app.job and app.job.running:
+                        raise RuntimeError("espera a que termine la tarea en marcha")
+                    updater.start_update()
+                    self._json({"ok": True})
                 elif path == "/api/job/cancel":
                     if app.job:
                         app.job.cancel = True
                     self._json({"ok": True})
                 else:
                     self._json({"error": "no existe"}, 404)
-            except (ValueError, KeyError, RuntimeError, OSError, tmdb.TmdbError) as exc:
+            except (ValueError, KeyError, RuntimeError, OSError, tmdb.TmdbError,
+                    updater.UpdateError) as exc:
                 self._json({"error": str(exc)}, 400)
 
     return Handler
@@ -388,6 +426,7 @@ def serve(media_root: str, config_dir: str, host: str = "0.0.0.0", port: int = 8
           ffmpeg: str = "ffmpeg", ffprobe: str = "ffprobe", password: str = "") -> None:
     cfg = Config(Path(media_root), Path(config_dir), ffmpeg, ffprobe, password)
     httpd = ThreadingHTTPServer((host, port), make_handler(App(cfg)))
+    updater.cleanup_helper_image_later()
     print(f"mkv-seekfix web en http://{host}:{port}  (media: {cfg.media_root})", flush=True)
     try:
         httpd.serve_forever()

@@ -10,8 +10,13 @@ services:
     environment:
       TZ: America/Chicago
       # Contraseña para entrar a la web (usuario cualquiera). Vacía = sin contraseña.
+      # Ponla siempre: con el socket de Docker montado, la web controla el servidor.
       MKV_SEEKFIX_PASSWORD: ""
+      # Carpeta de este docker-compose.yml en el servidor (para el boton Actualizar).
+      MKV_SEEKFIX_HOST_DIR: /volume1/docker/mkv-seekfix
     volumes:
+      # Para el boton Actualizar de la web. Quitalo si no lo quieres.
+      - /var/run/docker.sock:/var/run/docker.sock
       # Misma ruta que usa Jellyfin dentro de su contenedor.
       - /volume1/media:/media
       # Ajustes, registros, papelera y respaldo de MKV.

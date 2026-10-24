@@ -16,4 +16,4 @@ mkv-seekfix = "mkv_seekfix.cli:main"
 packages = ["mkv_seekfix"]
 
 [tool.setuptools.package-data]
-mkv_seekfix = ["web_ui.html"]
+mkv_seekfix = ["web_ui.html", "VERSION"]
