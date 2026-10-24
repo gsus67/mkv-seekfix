@@ -112,7 +112,7 @@ class App:
 
         def fn(job: Job):
             job.total = len(checked)
-            out = {"ops": [], "issues": []}
+            out = {"ops": [], "issues": [], "shows": []}
             key = self.cfg.settings.get("tmdb_key", "")
             client = tmdb.Tmdb(key, self.cfg.settings.get("tmdb_language", "es-ES")) if key else None
             for root, kind in checked:
@@ -125,8 +125,11 @@ class App:
                 d = plan.to_dict()
                 for item in d["ops"] + d["issues"]:
                     item["root"] = str(root)
+                for show in d["shows"]:
+                    show["root"], show["group"] = str(root), show["folder"]
                 out["ops"] += d["ops"]
                 out["issues"] += d["issues"]
+                out["shows"] += d["shows"]
                 job.done += 1
                 job.log(f"  {len(plan.ops)} cambios propuestos, {len(plan.issues)} avisos")
             for i, op in enumerate(out["ops"]):

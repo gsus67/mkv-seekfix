@@ -76,7 +76,8 @@ class Plan:
 
     def to_dict(self) -> dict:
         return {"ops": [asdict(o) for o in self.ops],
-                "issues": [asdict(i) for i in self.issues]}
+                "issues": [asdict(i) for i in self.issues],
+                "shows": self.shows}
 
 
 def is_video(p: Path) -> bool:
@@ -512,13 +513,13 @@ def plan_movies(root: Path, ffprobe: Optional[list[str]] = None) -> Plan:
             if ffprobe:
                 data["duration_min"] = probe_media(ffprobe, video).duration_min
             plan.issues.append(Issue(str(video), "pelicula sin año",
-                                     "indica el año para renombrarla", "sin año", data))
+                                     "indica el año para renombrarla", "Películas sin año", data))
         groups.setdefault((_norm(title), year), []).append(video)
 
     for (title, year), vids in sorted(groups.items(), key=lambda kv: kv[0][0]):
         if len(vids) < 2 or year is None:
             continue
-        group = f"duplicada: {vids[0].name}"
+        group = f"Duplicada: {vids[0].name}"
         infos = [probe_media(ffprobe, v) for v in vids] if ffprobe else [MediaInfo(size=v.stat().st_size) for v in vids]
         data = {"files": [{"path": str(v), "info": i.label()} for v, i in zip(vids, infos)]}
         if len(vids) == 2 and ffprobe:
@@ -540,13 +541,13 @@ def plan_movie_year(video: Path, year: int, root: Path) -> list[Op]:
     if video.parent == root:
         title, _ = movie_title(video.name)
         return [Op(str(video), str(video.with_name(f"{title} ({year}){video.suffix.lower()}")),
-                   "rename", "año indicado a mano", "sin año")]
+                   "rename", "año indicado a mano", "Películas sin año")]
     folder = video.parent
     while folder.parent != root:
         folder = folder.parent
     title, _ = movie_title(folder.name)
     return [Op(str(folder), str(folder.with_name(f"{title} ({year})")),
-               "rename", "año indicado a mano", "sin año")]
+               "rename", "año indicado a mano", "Películas sin año")]
 
 
 # ---------------------------------------------------------------- aplicar
