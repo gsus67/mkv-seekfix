@@ -76,7 +76,8 @@ class Plan:
 
     def to_dict(self) -> dict:
         return {"ops": [asdict(o) for o in self.ops],
-                "issues": [asdict(i) for i in self.issues]}
+                "issues": [asdict(i) for i in self.issues],
+                "shows": self.shows}
 
 
 def is_video(p: Path) -> bool:
@@ -181,8 +182,10 @@ def _add_rename(plan: Plan, src: Path, dst: Path, reason: str, group: str,
             plan.ops.append(Op(str(side), str(sdst), "rename", "acompaña al video", group))
 
 
-def plan_series(root: Path) -> Plan:
-    """Revisa una biblioteca de series/anime (una carpeta por serie)."""
+def plan_series(root: Path, ffprobe: Optional[list[str]] = None) -> Plan:
+    """Revisa una biblioteca de series/anime (una carpeta por serie). Con
+    ffprobe, en las temporadas con huecos avisa de archivos que duran el doble
+    (pueden traer dos episodios)."""
     root = Path(root)
     plan = Plan()
     taken: set[str] = set()
@@ -191,11 +194,25 @@ def plan_series(root: Path) -> Plan:
             plan.issues.append(Issue(str(f), "archivo suelto en la raiz",
                                      "debe ir dentro de la carpeta de una serie"))
     for show_dir in sorted(p for p in root.iterdir() if p.is_dir() and not p.name.startswith((".", "#", "@"))):
-        _plan_show(plan, show_dir, taken)
+        _plan_show(plan, show_dir, taken, ffprobe)
     return plan
 
 
-def _plan_show(plan: Plan, show_dir: Path, taken: set[str]) -> None:
+def _long_files(ffprobe: list[str], files: list[Path]) -> list[tuple[str, int]]:
+    """Archivos que duran 1,7 veces o mas la mediana de la temporada."""
+    durs = []
+    for f in files:
+        d = probe_media(ffprobe, f).duration_min
+        if d:
+            durs.append((f, d))
+    if len(durs) < 3:
+        return []
+    med = sorted(d for _, d in durs)[len(durs) // 2]
+    return [(f.name, d) for f, d in durs if d >= 1.7 * med]
+
+
+def _plan_show(plan: Plan, show_dir: Path, taken: set[str],
+               ffprobe: Optional[list[str]] = None) -> None:
     show = show_name(show_dir.name)
     group = show_dir.name
     # (archivo, temporada de su carpeta, carpeta es raiz de la serie)
@@ -212,14 +229,14 @@ def _plan_show(plan: Plan, show_dir: Path, taken: set[str]) -> None:
     guesses: list[tuple[Path, EpGuess, bool]] = []
     have: dict[int, set[int]] = {}  # temporada -> episodios presentes (ya bien nombrados)
     max_ep = 0
+    good_files: list[tuple[Path, int, int, Optional[int]]] = []
     for p, dseason, loose in entries:
         good = GOOD_EP.search(p.name)
         if good:
             s, e = int(good.group(1)), int(good.group(2))
-            have.setdefault(s, set()).update(range(e, int(good.group(3) or e) + 1))
-            if re.search(r"(\.(mkv|mp4|avi|m4v|ts)){2,}$", p.name, re.I):
-                base = re.sub(r"(\.(mkv|mp4|avi|m4v|ts))+$", "", p.name, flags=re.I)
-                _add_rename(plan, p, p.with_name(base + p.suffix), "extension repetida", group, taken)
+            e2 = int(good.group(3)) if good.group(3) else None
+            have.setdefault(s, set()).update(range(e, (e2 or e) + 1))
+            good_files.append((p, s, e, e2))
             continue
         g = guess_episode(p.stem, show, dseason if not loose else None)
         if g is None:
@@ -263,16 +280,109 @@ def _plan_show(plan: Plan, show_dir: Path, taken: set[str]) -> None:
         _add_rename(plan, p, folder / name, reason, group, taken)
         have.setdefault(g.season, set()).update(range(ep, (ep2 or ep) + 1))
 
+    fixed = _fix_mixed_numbering(plan, show, group, good_files, have, taken)
+    for p, s, e, e2 in good_files:
+        if p not in fixed:
+            pad = 3 if max(have.get(s) or {0}) >= 100 else 2
+            _tidy_name(plan, p, show, show_dir.name, s, e, e2, pad, group, taken)
+
+    prev_last = None
     for s in sorted(have):
         eps = have[s]
-        missing = sorted(set(range(1, max(eps) + 1)) - eps) if s > 0 else []
+        if s == 0:
+            continue
+        lo, hi = min(eps), max(eps)
+        # Temporada con numeracion absoluta (One Piece S09E311): se cuenta desde
+        # donde acabo la anterior, no desde el 1.
+        if s >= 2 and lo > 1 and prev_last is not None and prev_last < lo:
+            start = prev_last + 1
+        elif s >= 2 and lo > 1 and prev_last is None:
+            start = lo
+        else:
+            start = 1
+        prev_last = hi
+        missing = sorted(set(range(start, hi + 1)) - eps)
         if missing:
-            plan.issues.append(Issue(str(show_dir), "faltan episodios",
-                                     f"temporada {s}: faltan {_ranges(missing)} (tiene {len(eps)}, hasta el {max(eps)})",
-                                     group, {"season": s, "missing": missing, "have": len(eps),
-                                             "last": max(eps), "show": show}))
+            hint = f"temporada {s}: faltan {_ranges(missing)} (tiene {len(eps)}, hasta el {max(eps)})"
+            data = {"season": s, "missing": missing, "have": len(eps), "last": max(eps), "show": show}
+            if ffprobe:
+                # Los ya nombrados como dobles (E026-E027) cuentan como dos: no se avisa.
+                files = [p for p, fs, _, e2 in good_files if fs == s and not e2] + \
+                        [p for p, g, _ in guesses if g.season == s and not g.episode_end]
+                long = _long_files(ffprobe, files)
+                if long:
+                    hint += "; ojo, duran el doble y pueden traer dos episodios: " + \
+                            ", ".join(f"{n} ({d} min)" for n, d in long)
+                    data["long_files"] = [n for n, _ in long]
+            plan.issues.append(Issue(str(show_dir), "faltan episodios", hint, group, data))
     plan.shows.append({"path": str(show_dir), "show": show, "folder": show_dir.name,
                        "seasons": {s: {"have": len(e), "last": max(e)} for s, e in have.items()}})
+
+
+def _episode_title(stem: str, end: int) -> str:
+    """Titulo que va despues de SxxEyy: ' - Titulo' o '.Titulo.Con.Puntos.1080p'."""
+    rest = re.sub(r"\[[^\]]*\]|\{[^}]*\}|\([^)]*\)", " ", stem[end:])
+    rest = re.sub(r"(\.(mkv|mp4|avi|m4v|ts))+$", "", rest, flags=re.I)
+    if " " not in rest.strip(" .-_"):
+        rest = rest.replace(".", " ").replace("_", " ")
+    t = TAGS.search(rest)
+    if t:
+        rest = rest[:t.start()]
+    rest = re.sub(r"\s+", " ", rest).strip(" .-_")
+    return rest if re.search(r"[A-Za-zÀ-ÿ]{2}", rest) else ""
+
+
+def _tidy_name(plan: Plan, p: Path, show: str, folder: str, s: int, e: int, e2: Optional[int],
+               pad: int, group: str, taken: set[str]) -> None:
+    """Deja un nombre que ya tiene SxxEyy como 'Serie - S01E01[ - Titulo].ext'."""
+    m = GOOD_EP.search(p.name)
+    title = _episode_title(re.sub(r"(\.(mkv|mp4|avi|m4v|ts))+$", "", p.name, flags=re.I), m.end())
+    code = f"S{s:02d}E{e:0{pad}d}" + (f"-E{e2:0{pad}d}" if e2 else "")
+    new = f"{show} - {code}" + (f" - {title}" if title else "") + p.suffix.lower()
+    if new == p.name:
+        return
+    # Un nombre ya ordenado se deja aunque lleve el año de la carpeta o otro
+    # relleno (S01E01 frente a S01E001): cambiarlo no aporta nada.
+    prefix = "(?:" + re.escape(show) + "|" + re.escape(folder) + ")"
+    if re.fullmatch(prefix + r" - S\d{2}E\d{2,4}(-E\d{2,4})?( - .+)?\.[a-z0-9]{2,4}", p.name) \
+            and not TAGS.search(p.name[m.end():]) and "[" not in p.name:
+        return
+    reason = "extension repetida" if re.search(r"(\.(mkv|mp4|avi|m4v|ts)){2,}$", p.name, re.I) \
+        else "limpiar nombre"
+    _add_rename(plan, p, p.with_name(new), reason, group, taken)
+
+
+def _fix_mixed_numbering(plan: Plan, show: str, group: str,
+                         good_files: list[tuple[Path, int, int, Optional[int]]],
+                         have: dict[int, set[int]], taken: set[str]) -> set[Path]:
+    """Temporada que empieza en E01 pero tiene una cola con numeros absolutos
+    (Fire Force S03E01-E13 y S03E71-E73): la cola se pasa a numeracion de la
+    temporada restando los episodios de las temporadas anteriores. Devuelve
+    los archivos que ya tienen propuesta."""
+    fixed: set[Path] = set()
+    for s in sorted(have):
+        eps = sorted(have[s])
+        if s < 2 or not eps or eps[0] != 1 or len(eps) < 2:
+            continue
+        gaps = [(eps[i + 1] - eps[i], i) for i in range(len(eps) - 1)]
+        jump, idx = max(gaps)
+        if jump <= 10:
+            continue
+        low, high = set(eps[:idx + 1]), eps[idx + 1:]
+        offset = sum(max(have[t]) for t in have if 1 <= t < s and have[t] and min(have[t]) == 1)
+        if not offset or high[0] - offset <= max(low) or any(e - offset in low for e in high):
+            continue
+        pad = 3 if max(eps) - offset >= 100 else 2
+        for p, fs, e, e2 in good_files:
+            if fs != s or e < high[0]:
+                continue
+            ne, ne2 = e - offset, (e2 - offset if e2 else None)
+            code = f"S{s:02d}E{ne:0{pad}d}" + (f"-E{ne2:0{pad}d}" if ne2 else "")
+            _add_rename(plan, p, p.with_name(f"{show} - {code}{p.suffix.lower()}"),
+                        f"numero absoluto dentro de la temporada (E{e} = E{ne})", group, taken)
+            fixed.add(p)
+        have[s] = low | {e - offset for e in high}
+    return fixed
 
 
 def _ranges(nums: list[int]) -> str:
@@ -387,7 +497,15 @@ def plan_movies(root: Path, ffprobe: Optional[list[str]] = None) -> Plan:
     root = Path(root)
     plan = Plan()
     groups: dict[tuple[str, Optional[int]], list[Path]] = {}
-    for video, folder in _movie_files(root):
+    files = _movie_files(root)
+    per_folder: dict[Path, int] = {}
+    for _, folder in files:
+        if folder:
+            per_folder[folder] = per_folder.get(folder, 0) + 1
+    for video, folder in files:
+        # Una carpeta con varias peliculas (una coleccion): cada archivo es la suya.
+        if folder and per_folder[folder] > 1:
+            folder = None
         title, year = movie_title(folder.name if folder else video.name)
         if year is None and folder:
             title, year = movie_title(video.name)
@@ -396,13 +514,13 @@ def plan_movies(root: Path, ffprobe: Optional[list[str]] = None) -> Plan:
             if ffprobe:
                 data["duration_min"] = probe_media(ffprobe, video).duration_min
             plan.issues.append(Issue(str(video), "pelicula sin año",
-                                     "indica el año para renombrarla", "sin año", data))
+                                     "indica el año para renombrarla", "Películas sin año", data))
         groups.setdefault((_norm(title), year), []).append(video)
 
     for (title, year), vids in sorted(groups.items(), key=lambda kv: kv[0][0]):
         if len(vids) < 2 or year is None:
             continue
-        group = f"duplicada: {vids[0].name}"
+        group = f"Duplicada: {vids[0].name}"
         infos = [probe_media(ffprobe, v) for v in vids] if ffprobe else [MediaInfo(size=v.stat().st_size) for v in vids]
         data = {"files": [{"path": str(v), "info": i.label()} for v, i in zip(vids, infos)]}
         if len(vids) == 2 and ffprobe:
@@ -424,13 +542,13 @@ def plan_movie_year(video: Path, year: int, root: Path) -> list[Op]:
     if video.parent == root:
         title, _ = movie_title(video.name)
         return [Op(str(video), str(video.with_name(f"{title} ({year}){video.suffix.lower()}")),
-                   "rename", "año indicado a mano", "sin año")]
+                   "rename", "año indicado a mano", "Películas sin año")]
     folder = video.parent
     while folder.parent != root:
         folder = folder.parent
     title, _ = movie_title(folder.name)
     return [Op(str(folder), str(folder.with_name(f"{title} ({year})")),
-               "rename", "año indicado a mano", "sin año")]
+               "rename", "año indicado a mano", "Películas sin año")]
 
 
 # ---------------------------------------------------------------- aplicar

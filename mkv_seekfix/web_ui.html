@@ -71,6 +71,24 @@ dialog::backdrop { background: rgb(0 0 0 / .45); }
 .dirs button:hover { background: var(--chip); }
 .ok { color: var(--ok); } .bad { color: var(--bad); }
 label.chk { display: inline-flex; gap: 6px; align-items: center; }
+details.scard { border: 1px solid var(--line); border-radius: 10px; margin: 8px 0; background: var(--panel); }
+details.scard > summary { list-style: none; cursor: pointer; padding: 10px 12px; display: flex; gap: 8px;
+  align-items: center; flex-wrap: wrap; }
+details.scard > summary::-webkit-details-marker { display: none; }
+details.scard > summary::before { content: "▸"; color: var(--muted); }
+details.scard[open] > summary::before { content: "▾"; }
+details.scard .sname { font-weight: 600; flex: 1; min-width: 160px; word-break: break-word; }
+details.scard .body { padding: 0 12px 12px; }
+.tag.warn { color: var(--warn); } .tag.rn { color: var(--accent); }
+.sub { font-size: 13px; font-weight: 600; margin: 12px 0 4px; }
+.seasons { display: flex; gap: 6px; flex-wrap: wrap; }
+.miss { font-size: 13px; padding: 4px 0; border-bottom: 1px dashed var(--line); }
+.miss b { color: var(--warn); }
+.ren { display: grid; grid-template-columns: 22px 1fr; gap: 6px; padding: 6px 0; border-bottom: 1px dashed var(--line);
+  font-size: 13px; }
+.ren .now { color: var(--muted); word-break: break-all; }
+.ren .new { word-break: break-all; }
+.ren .lbl { display: inline-block; width: 70px; white-space: nowrap; color: var(--muted); font-size: 11px; text-transform: uppercase; }
 .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--text);
   color: var(--bg); padding: 8px 14px; border-radius: 8px; display: none; max-width: calc(100vw - 32px); }
 </style>
@@ -85,6 +103,7 @@ label.chk { display: inline-flex; gap: 6px; align-items: center; }
     <button data-tab="registros">Registros</button>
     <button data-tab="ajustes">Ajustes</button>
   </nav>
+  <button class="b primary small" id="updBadge" hidden>Actualización disponible</button>
 </header>
 <main>
 
@@ -112,19 +131,18 @@ label.chk { display: inline-flex; gap: 6px; align-items: center; }
     </div>
     <div class="progress"><div id="namesBar"></div></div>
   </div>
-  <div class="card" id="namesOpsCard" hidden>
+  <div class="card" id="namesResCard" hidden>
     <div class="row" style="justify-content:space-between">
-      <h2>Cambios propuestos</h2>
+      <h2>Resultado por serie</h2>
       <div class="row">
+        <input type="text" id="namesFilter" placeholder="Buscar serie o película" style="min-width:180px">
         <label class="chk small"><input type="checkbox" id="namesAll" checked> Todos</label>
+        <button class="b" id="namesOpenAll">Abrir todo</button>
         <button class="b primary" id="namesApply">Aplicar seleccionados</button>
       </div>
     </div>
-    <div id="namesOps"></div>
-  </div>
-  <div class="card" id="namesIssuesCard" hidden>
-    <h2>Avisos (necesitan tu decisión)</h2>
-    <div id="namesIssues"></div>
+    <p class="muted small" id="namesSummary"></p>
+    <div id="namesRes"></div>
   </div>
 </section>
 
@@ -170,6 +188,17 @@ label.chk { display: inline-flex; gap: 6px; align-items: center; }
 </section>
 
 <section id="ajustes">
+  <div class="card">
+    <h2>Actualización</h2>
+    <p class="small" id="updInfo">Comprobando…</p>
+    <div class="row">
+      <button class="b" id="updCheck">Buscar actualizaciones</button>
+      <button class="b primary" id="updRun">Actualizar ahora</button>
+    </div>
+    <p class="muted small">Descarga lo último de GitHub, reconstruye, reinicia y borra la imagen anterior. La página
+      se queda sin conexión un momento mientras se reinicia.</p>
+    <pre class="log" id="updLog" hidden></pre>
+  </div>
   <div class="card">
     <h2>Ajustes</h2>
     <div class="row" style="margin-bottom:8px"><label style="width:150px">Clave de TMDB</label>
@@ -301,69 +330,135 @@ $("#namesScan").onclick = () => {
     if (j.result) { namesPlan = j.result; renderNames(); }
   }, "#namesBar", "#namesInfo");
 };
-function groupBy(items) {
-  const m = new Map();
-  items.forEach((x) => { const k = x.group || "Otros"; if (!m.has(k)) m.set(k, []); m.get(k).push(x); });
-  return m;
-}
-function renderNames() {
-  const {ops, issues} = namesPlan;
-  $("#namesOpsCard").hidden = false;
-  $("#namesIssuesCard").hidden = !issues.length;
-  const box = $("#namesOps");
-  box.innerHTML = ops.length ? "" : '<p class="ok">Todo en orden: no hay cambios que proponer.</p>';
-  for (const [g, list] of groupBy(ops)) {
-    box.insertAdjacentHTML("beforeend", `<div class="group">${esc(g)} <span class="tag">${list.length}</span></div>`);
-    list.forEach((o) => {
-      const to = o.kind === "trash" ? '<span class="tag trash">a la papelera</span>' :
-        esc(o.dst.split("/").slice(-2).join("/"));
-      box.insertAdjacentHTML("beforeend", `<label class="op"><input type="checkbox" data-op="${o.id}" checked>
-        <div><div class="from">${esc(rel(o.src))}</div><div class="to">→ ${to} <span class="tag">${esc(o.reason)}</span></div></div></label>`);
-    });
+function issueEl(it) {
+  const d = document.createElement("div"); d.className = "issue";
+  let extra = "";
+  if (it.problem === "pelicula sin año") {
+    const dur = it.data.duration_min ? ` · dura ${it.data.duration_min} min` : "";
+    extra = `<div class="row" style="margin-top:6px">
+      <span class="small muted">«${esc(it.data.title)}»${dur}</span>
+      <input type="number" placeholder="año" min="1900" max="2100" style="width:90px">
+      <button class="b" data-a="tmdb">Buscar en TMDB</button>
+      <button class="b primary" data-a="year">Renombrar</button></div><div class="small muted" data-r></div>`;
+  } else if (it.problem === "pelicula duplicada" && it.data.files) {
+    extra = it.data.files.map((f) => `<div class="row" style="margin-top:6px">
+      <span class="p small" style="flex:1">${esc(rel(f.path))}<br><span class="muted">${esc(f.info)}</span></span>
+      <button class="b danger" data-trash="${esc(f.path)}">A la papelera</button></div>`).join("");
   }
-  const ib = $("#namesIssues"); ib.innerHTML = "";
-  issues.forEach((it, k) => {
-    const d = document.createElement("div"); d.className = "issue";
-    let extra = "";
-    if (it.problem === "pelicula sin año") {
-      const dur = it.data.duration_min ? ` · dura ${it.data.duration_min} min` : "";
-      extra = `<div class="row" style="margin-top:6px">
-        <span class="small muted">«${esc(it.data.title)}»${dur}</span>
-        <input type="number" placeholder="año" min="1900" max="2100" style="width:90px">
-        <button class="b" data-a="tmdb">Buscar en TMDB</button>
-        <button class="b primary" data-a="year">Renombrar</button></div><div class="small muted" data-r></div>`;
-    } else if (it.problem === "pelicula duplicada" && it.data.files) {
-      extra = it.data.files.map((f) => `<div class="row" style="margin-top:6px">
-        <span class="p small" style="flex:1">${esc(rel(f.path))}<br><span class="muted">${esc(f.info)}</span></span>
-        <button class="b danger" data-trash="${esc(f.path)}">A la papelera</button></div>`).join("");
-    }
-    d.innerHTML = `<div class="prob">${esc(it.problem)}</div><div class="p">${esc(rel(it.path))}</div>
-      <div class="muted small">${esc(it.hint)}</div>${extra}`;
-    const yearIn = d.querySelector("input[type=number]");
-    d.querySelectorAll("button[data-a=tmdb]").forEach((b) => b.onclick = async () => {
-      const out = d.querySelector("[data-r]"); out.textContent = "Buscando…";
-      try {
-        const r = await api("/api/names/tmdb", {title: it.data.title, duration_min: it.data.duration_min || 0});
-        if (r.best) yearIn.value = r.best.year;
-        out.innerHTML = (r.best ? `<span class="ok">Propuesto ${r.best.year}: ${esc(r.why)}</span>` : `<span class="bad">${esc(r.why)}</span>`)
-          + "<br>" + r.candidates.map((c) => esc(c.label)).join(" · ");
-      } catch (e) { out.textContent = e.message; }
-    });
-    d.querySelectorAll("button[data-a=year]").forEach((b) => b.onclick = async () => {
-      if (!yearIn.value) return toast("Escribe el año");
-      try {
-        const r = await api("/api/names/year", {path: it.path, root: it.root, year: +yearIn.value});
-        applyOps(r.ops, () => d.remove());
-      } catch (e) { toast(e.message); }
-    });
-    d.querySelectorAll("button[data-trash]").forEach((b) => b.onclick = () => {
-      if (!confirm("¿Mover a la papelera?\n" + b.dataset.trash)) return;
-      applyOps([{src: b.dataset.trash, dst: "", kind: "trash", reason: "elegido a mano", group: it.group}], () => d.remove());
-    });
-    ib.appendChild(d);
+  d.innerHTML = `<div class="prob">${esc(it.problem)}</div><div class="p">${esc(rel(it.path))}</div>
+    <div class="muted small">${esc(it.hint)}</div>${extra}`;
+  const yearIn = d.querySelector("input[type=number]");
+  d.querySelectorAll("button[data-a=tmdb]").forEach((b) => b.onclick = async () => {
+    const out = d.querySelector("[data-r]"); out.textContent = "Buscando…";
+    try {
+      const r = await api("/api/names/tmdb", {title: it.data.title, duration_min: it.data.duration_min || 0});
+      if (r.best) yearIn.value = r.best.year;
+      out.innerHTML = (r.best ? `<span class="ok">Propuesto ${r.best.year}: ${esc(r.why)}</span>` : `<span class="bad">${esc(r.why)}</span>`)
+        + "<br>" + r.candidates.map((c) => esc(c.label)).join(" · ");
+    } catch (e) { out.textContent = e.message; }
   });
+  d.querySelectorAll("button[data-a=year]").forEach((b) => b.onclick = async () => {
+    if (!yearIn.value) return toast("Escribe el año");
+    try {
+      const r = await api("/api/names/year", {path: it.path, root: it.root, year: +yearIn.value});
+      applyOps(r.ops, () => d.remove());
+    } catch (e) { toast(e.message); }
+  });
+  d.querySelectorAll("button[data-trash]").forEach((b) => b.onclick = () => {
+    if (!confirm("¿Mover a la papelera?\n" + b.dataset.trash)) return;
+    applyOps([{src: b.dataset.trash, dst: "", kind: "trash", reason: "elegido a mano", group: it.group}], () => d.remove());
+  });
+  return d;
 }
-$("#namesAll").onchange = (e) => document.querySelectorAll("[data-op]").forEach((c) => c.checked = e.target.checked);
+
+// Agrupa cambios, avisos y resumen por serie (carpeta + biblioteca).
+function buildGroups() {
+  const {ops, issues, shows = []} = namesPlan;
+  const groups = new Map();
+  const get = (root, group) => {
+    const key = root + "|" + (group || "Otros");
+    if (!groups.has(key)) groups.set(key, {key, root, name: group || "Otros", ops: [], missing: [], issues: [], show: null});
+    return groups.get(key);
+  };
+  ops.forEach((o) => get(o.root, o.group).ops.push(o));
+  issues.forEach((i) => {
+    const g = get(i.root, i.group);
+    (i.problem.startsWith("faltan episodios") ? g.missing : g.issues).push(i);
+  });
+  shows.forEach((s) => { const k = s.root + "|" + s.group; if (groups.has(k)) groups.get(k).show = s; });
+  return [...groups.values()].sort((a, b) => a.name.localeCompare(b.name, "es", {sensitivity: "base"}));
+}
+
+function shortPath(p, g) {
+  const base = g.root + "/" + g.name + "/";
+  return p.startsWith(base) ? p.slice(base.length) : rel(p);
+}
+
+function renderNames() {
+  const groups = buildGroups();
+  $("#namesResCard").hidden = false;
+  const box = $("#namesRes"); box.innerHTML = "";
+  const nOps = namesPlan.ops.length;
+  const nMiss = groups.reduce((a, g) => a + g.missing.reduce((b, m) => b + (m.data.missing || []).length, 0), 0);
+  const clean = (namesPlan.shows || []).length - groups.filter((g) => g.show).length;
+  $("#namesSummary").textContent = groups.length
+    ? `${groups.length} series o grupos con algo que revisar · ${nOps} cambios de nombre · ${nMiss} episodios que faltan`
+      + (clean > 0 ? ` · ${clean} series sin problemas` : "")
+      + " · Al renombrar, Jellyfin puede perder la marca de «visto»."
+    : "Todo en orden: no hay nada que revisar.";
+  groups.forEach((g, gi) => {
+    const det = document.createElement("details");
+    det.className = "scard"; det.dataset.name = g.name.toLowerCase();
+    const missN = g.missing.reduce((a, m) => a + (m.data.missing || []).length, 0);
+    det.innerHTML = `<summary>
+        ${g.ops.length ? `<input type="checkbox" data-group="${gi}" checked onclick="event.stopPropagation()">` : ""}
+        <span class="sname">${esc(g.name)}</span>
+        ${g.ops.length ? `<span class="tag rn">${g.ops.length} a renombrar</span>` : ""}
+        ${missN ? `<span class="tag warn">faltan ${missN}</span>` : ""}
+        ${g.issues.length ? `<span class="tag warn">${g.issues.length} avisos</span>` : ""}
+        <span class="tag">${esc(rel(g.root))}</span></summary><div class="body"></div>`;
+    const body = det.querySelector(".body");
+    if (g.show && g.show.seasons) {
+      const ss = Object.entries(g.show.seasons).sort((a, b) => +a[0] - +b[0]).map(([s, v]) =>
+        `<span class="tag">${+s === 0 ? "Especiales" : "T" + s}: ${v.have} ep${v.last !== v.have ? ` (hasta E${v.last})` : ""}</span>`).join("");
+      body.insertAdjacentHTML("beforeend", `<div class="sub">Temporadas</div><div class="seasons">${ss}</div>`);
+    }
+    if (g.missing.length) {
+      body.insertAdjacentHTML("beforeend", `<div class="sub">Episodios que faltan (${missN})</div>`);
+      g.missing.sort((a, b) => a.data.season - b.data.season).forEach((m) => body.insertAdjacentHTML("beforeend",
+        `<div class="miss"><b>T${m.data.season}: faltan ${m.data.missing.length}</b> — ${esc(m.hint.replace(/^temporada \d+: /, ""))}</div>`));
+    }
+    if (g.ops.length) {
+      body.insertAdjacentHTML("beforeend", `<div class="sub">Cambios de nombre (${g.ops.length})</div>`);
+      g.ops.forEach((o) => {
+        const to = o.kind === "trash" ? '<span class="tag trash">a la papelera</span>' : esc(shortPath(o.dst, g));
+        body.insertAdjacentHTML("beforeend", `<label class="ren"><input type="checkbox" data-op="${o.id}" data-in="${gi}" checked>
+          <div><div class="now"><span class="lbl">Ahora</span>${esc(shortPath(o.src, g))}</div>
+          <div class="new"><span class="lbl">Quedará</span>${to} <span class="tag">${esc(o.reason)}</span></div></div></label>`);
+      });
+    }
+    if (g.issues.length) {
+      body.insertAdjacentHTML("beforeend", `<div class="sub">Avisos</div>`);
+      g.issues.forEach((it) => body.appendChild(issueEl(it)));
+    }
+    box.appendChild(det);
+  });
+  box.querySelectorAll("[data-group]").forEach((c) => c.onchange = () =>
+    box.querySelectorAll(`[data-in="${c.dataset.group}"]`).forEach((x) => x.checked = c.checked));
+  filterNames();
+}
+function filterNames() {
+  const q = $("#namesFilter").value.trim().toLowerCase();
+  document.querySelectorAll("details.scard").forEach((d) => d.hidden = q && !d.dataset.name.includes(q));
+}
+$("#namesFilter").oninput = filterNames;
+$("#namesOpenAll").onclick = () => {
+  const ds = [...document.querySelectorAll("details.scard:not([hidden])")];
+  const open = !ds.every((d) => d.open);
+  ds.forEach((d) => d.open = open);
+  $("#namesOpenAll").textContent = open ? "Cerrar todo" : "Abrir todo";
+};
+$("#namesAll").onchange = (e) => document.querySelectorAll("[data-op], [data-group]").forEach((c) => c.checked = e.target.checked);
 function applyOps(ops, after) {
   startJob("/api/names/apply", {ops}, (j) => {
     const r = j.result || {results: []};
@@ -443,8 +538,57 @@ $("#sSave").onclick = async () => {
   } catch (e) { toast(e.message); }
 };
 
+// ---------------------------------------------------------------- actualizar
+let ver = null;
+async function loadVersion(refresh) {
+  try {
+    ver = await api("/api/version" + (refresh ? "?refresh=1" : ""));
+  } catch (e) { $("#updInfo").textContent = e.message; return; }
+  let txt = `Versión instalada: ${ver.current || "desconocida"}`;
+  if (ver.latest) txt += ` · última en GitHub: ${ver.latest}` + (ver.message ? ` (${ver.message})` : "");
+  if (ver.error) txt += ` · ${ver.error}`;
+  if (!ver.can_update) txt += ` · No se puede actualizar desde aquí: ${ver.why}`;
+  else if (ver.latest && !ver.update_available && ver.current) txt += " · Está al día.";
+  $("#updInfo").textContent = txt;
+  $("#updRun").disabled = !ver.can_update;
+  $("#updBadge").hidden = !(ver.update_available && ver.can_update);
+}
+$("#updBadge").onclick = () => document.querySelector('nav button[data-tab="ajustes"]').click();
+$("#updCheck").onclick = () => loadVersion(true);
+$("#updRun").onclick = async () => {
+  if (!confirm("¿Actualizar ahora? La página se reiniciará.")) return;
+  try { await api("/api/update", {}); } catch (e) { return toast(e.message); }
+  const target = ver && ver.latest;
+  $("#updLog").hidden = false;
+  $("#updLog").textContent = "Arrancando la actualización…";
+  $("#updRun").disabled = true;
+  const t0 = Date.now();
+  const timer = setInterval(async () => {
+    try {
+      const l = await api("/api/update/log");
+      if (l.lines.length) { $("#updLog").textContent = l.lines.join("\n"); $("#updLog").scrollTop = 1e9; }
+      const fin = l.lines.find((x) => x.startsWith("== FIN codigo"));
+      if (fin && !l.running) {
+        clearInterval(timer);
+        if (fin.endsWith(" 0")) {
+          const v = await api("/api/version?refresh=1");
+          toast("Actualizado a " + (v.current || target));
+          setTimeout(() => location.reload(), 1500);
+        } else {
+          toast("La actualización falló: mira el registro");
+          $("#updRun").disabled = false;
+        }
+      }
+    } catch (e) {
+      $("#updInfo").textContent = "Reiniciando… (la página volverá sola)";
+    }
+    if (Date.now() - t0 > 20 * 60 * 1000) { clearInterval(timer); toast("La actualización tarda demasiado"); }
+  }, 2000);
+};
+
 (async () => {
   state = await api("/api/state");
+  loadVersion(false);
   const s = state.settings;
   $("#sTmdb").value = s.tmdb_key; $("#sLang").value = s.tmdb_language;
   $("#sTrash").value = s.trash_dir; $("#sBackup").value = s.backup_dir;

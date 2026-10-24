@@ -1,3 +1,5 @@
+import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -99,10 +101,60 @@ class SeriesTests(unittest.TestCase):
         self.assertIn("E03-E04", miss[0].hint)
         self.assertEqual(p.shows[0]["seasons"][1], {"have": 5, "last": 7})
 
+    def test_absolute_seasons_are_not_missing(self):
+        touch(self.root, *[f"OP/S1/OP - S01E{n:02d}.mkv" for n in range(1, 62)],
+              *[f"OP/S2/OP - S02E{n:03d}.mkv" for n in range(62, 131) if n != 100])
+        p, r = self.plan()
+        miss = [i.data["missing"] for i in p.issues if i.problem == "faltan episodios"]
+        self.assertEqual(miss, [[100]])
+        self.assertEqual(r, {})
+
+    def test_mixed_absolute_tail_is_renamed(self):
+        touch(self.root, *[f"FF/T1/FF - S01E{n:02d}.mkv" for n in range(1, 25)],
+              *[f"FF/T2/FF - S02E{n:02d}.mkv" for n in range(1, 25)],
+              *[f"FF/T3/FF - S03E{n:02d}.mkv" for n in range(1, 14)],
+              "FF/T3/[CR] FF - S03E71 [1080p].mkv", "FF/T3/[CR] FF - S03E73 [1080p].mkv")
+        p, r = self.plan()
+        self.assertEqual(r["FF/T3/[CR] FF - S03E71 [1080p].mkv"], "FF/T3/FF - S03E23.mkv")
+        miss = [i.data["missing"] for i in p.issues if i.problem == "faltan episodios"]
+        self.assertEqual(miss, [list(range(14, 23)) + [24]])
+
+    def test_tidy_messy_names(self):
+        touch(self.root,
+              "Darling/Season 02/My.Dress.Up.Darling.S02E02.You.Can.Equip.Boobs.1080p.CR.WEB-DL.AAC2.0.H.264.mkv",
+              "Darling/Season 02/My.Dress-Up.Darling.S02e07.1080P.Cr.Web-Dl.mkv",
+              "Black Clover (2017)/Season 01/Black Clover (2017) - S01E37 - The One with No Magic.mkv",
+              "Chainsaw Man (2022)/Season 01/[Aw] Chainsaw Man - S01e09 [1080P].mkv",
+              "Lioness/Season 02/Lioness - S02E08.mkv.mkv")
+        _, r = self.plan()
+        self.assertEqual(Path(r["Darling/Season 02/My.Dress.Up.Darling.S02E02.You.Can.Equip.Boobs.1080p.CR.WEB-DL.AAC2.0.H.264.mkv"]).name,
+                         "Darling - S02E02 - You Can Equip Boobs.mkv")
+        self.assertEqual(Path(r["Darling/Season 02/My.Dress-Up.Darling.S02e07.1080P.Cr.Web-Dl.mkv"]).name, "Darling - S02E07.mkv")
+        self.assertEqual(Path(r["Chainsaw Man (2022)/Season 01/[Aw] Chainsaw Man - S01e09 [1080P].mkv"]).name,
+                         "Chainsaw Man - S01E09.mkv")
+        self.assertEqual(Path(r["Lioness/Season 02/Lioness - S02E08.mkv.mkv"]).name, "Lioness - S02E08.mkv")
+        self.assertNotIn("Black Clover (2017)/Season 01/Black Clover (2017) - S01E37 - The One with No Magic.mkv", r)
+
     def test_sidecar_follows_video(self):
         touch(self.root, "Show/Season 1/3.mkv", "Show/Season 1/3.es.srt")
         _, r = self.plan()
         self.assertEqual(r["Show/Season 1/3.es.srt"], "Show/Season 1/Show - S01E03.es.srt")
+
+
+@unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "requiere ffmpeg")
+class LongFileTests(unittest.TestCase):
+    def test_double_length_file_is_flagged(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            season = root / "Solo/Season 02"
+            season.mkdir(parents=True)
+            for ep, secs in ((1, 240), (2, 120), (3, 120), (5, 120)):
+                subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", f"color=d={secs}:s=16x16:r=1",
+                                "-c:v", "libx264", str(season / f"Solo - S02E{ep:02d}.mkv")], check=True)
+            p = names.plan_series(root, ["ffprobe"])
+            miss = [i for i in p.issues if i.problem == "faltan episodios"][0]
+            self.assertEqual(miss.data["missing"], [4])
+            self.assertEqual(miss.data["long_files"], ["Solo - S02E01.mkv"])
 
 
 class MovieTests(unittest.TestCase):
@@ -125,10 +177,13 @@ class MovieTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             touch(root, "Papillon.mkv", "Oppenheimer 2023.mp4", "Oppenheimer (2023) IMAX/opp.mkv",
-                  "Coleccion (2003-2017)/Piratas (2003).mkv")
+                  "Coleccion (2003-2017)/Piratas - La perla negra (2003).mkv",
+                  "Coleccion (2003-2017)/Piratas - El cofre (2006).mkv")
             p = names.plan_movies(root)
             self.assertEqual([i.path for i in p.issues if i.problem == "pelicula sin año"], [str(root / "Papillon.mkv")])
-            self.assertTrue(any(i.problem == "pelicula duplicada" for i in p.issues))
+            dups = [i for i in p.issues if i.problem == "pelicula duplicada"]
+            self.assertEqual(len(dups), 1)
+            self.assertIn("Oppenheimer", dups[0].path)
             op = names.plan_movie_year(root / "Papillon.mkv", 1973, root)[0]
             self.assertEqual(Path(op.dst).name, "Papillon (1973).mkv")
 

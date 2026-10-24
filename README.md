@@ -26,11 +26,18 @@ El servidor construye la imagen con el código de este repositorio (rama
    sh actualizar.sh
    ```
 
-Se abre en `http://IP-DEL-SERVIDOR:8765`.
+Se abre en `http://IP-DEL-SERVIDOR:8765` (puerto configurable en el compose).
 
 ### Actualizar
 
-El mismo comando:
+Desde la web: **Ajustes → Actualización → Actualizar ahora** (arriba aparece
+un aviso cuando hay versión nueva). Lanza un contenedor `docker:cli` temporal
+que ejecuta `actualizar.sh`; al terminar se borra el contenedor y su imagen.
+Necesita el socket de Docker y `MKV_SEEKFIX_HOST_DIR` del compose de ejemplo.
+Con el socket montado la web controla el servidor: **pon contraseña**
+(`MKV_SEEKFIX_PASSWORD`).
+
+O a mano, en la carpeta del compose:
 
 ```
 sh actualizar.sh
