@@ -306,8 +306,9 @@ def _plan_show(plan: Plan, show_dir: Path, taken: set[str],
             hint = f"temporada {s}: faltan {_ranges(missing)} (tiene {len(eps)}, hasta el {max(eps)})"
             data = {"season": s, "missing": missing, "have": len(eps), "last": max(eps), "show": show}
             if ffprobe:
-                files = [p for p, fs, _, _ in good_files if fs == s] + \
-                        [p for p, g, _ in guesses if g.season == s]
+                # Los ya nombrados como dobles (E026-E027) cuentan como dos: no se avisa.
+                files = [p for p, fs, _, e2 in good_files if fs == s and not e2] + \
+                        [p for p, g, _ in guesses if g.season == s and not g.episode_end]
                 long = _long_files(ffprobe, files)
                 if long:
                     hint += "; ojo, duran el doble y pueden traer dos episodios: " + \
