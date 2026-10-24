@@ -56,6 +56,10 @@ class Config:
         return p
 
 
+def rel_name(p: Path) -> str:
+    return p.name or str(p)
+
+
 class Job:
     """Una tarea en segundo plano con progreso y registro de lineas."""
 
@@ -69,6 +73,8 @@ class Job:
         self.result = None
         self.error = ""
         self.cancel = False
+        self.step = ""      # fase actual: "anime · nombres"
+        self.current = ""   # lo que se esta revisando ahora mismo
         self.started = time.time()
 
     def log(self, msg: str) -> None:
@@ -77,6 +83,7 @@ class Job:
 
     def to_dict(self) -> dict:
         return {"id": self.id, "kind": self.kind, "running": self.running, "done": self.done,
+                "step": self.step, "current": self.current, "elapsed": int(time.time() - self.started),
                 "total": self.total, "lines": self.lines[-200:], "result": self.result,
                 "error": self.error}
 
@@ -111,29 +118,52 @@ class App:
         ffprobe = self.cfg.tools.ffprobe
 
         def fn(job: Job):
-            job.total = len(checked)
             out = {"ops": [], "issues": [], "shows": []}
             key = self.cfg.settings.get("tmdb_key", "")
             client = tmdb.Tmdb(key, self.cfg.settings.get("tmdb_language", "es-ES")) if key else None
-            for root, kind in checked:
-                job.log(f"Revisando {root} ({kind})")
-                plan = names.plan_movies(root, ffprobe) if kind == "movies" else names.plan_series(root, ffprobe)
-                if client and plan.shows:
-                    job.log(f"  Comparando {len(plan.shows)} series con TMDB")
-                    for show in plan.shows:
-                        plan.issues += self._tmdb_missing(client, show)
-                d = plan.to_dict()
-                for item in d["ops"] + d["issues"]:
-                    item["root"] = str(root)
-                for show in d["shows"]:
-                    show["root"], show["group"] = str(root), show["folder"]
-                out["ops"] += d["ops"]
-                out["issues"] += d["issues"]
-                out["shows"] += d["shows"]
-                job.done += 1
-                job.log(f"  {len(plan.ops)} cambios propuestos, {len(plan.issues)} avisos")
+            phases = 3 if client else 2
+            job.total = 1000
+            n_roots = len(checked)
+
+            def tick(r: int, phase: int, label: str, current: str, i: int, n: int):
+                """Barra global: cada biblioteca tiene `phases` fases del mismo peso."""
+                if job.cancel:
+                    raise InterruptedError
+                inner = (i / n) if n else 1.0
+                job.done = int(1000 * ((r * phases + phase + inner) / (n_roots * phases)))
+                job.step = f"{rel_name(checked[r][0])} · fase {phase + 1}/{phases}: {label}"
+                job.current = f"{current}  ({i}/{n})" if current else ""
+
+            try:
+                for r, (root, kind) in enumerate(checked):
+                    job.log(f"Revisando {root} ({kind})")
+                    prog = lambda name, i, n, r=r: tick(r, 0, "nombres y episodios", name, i, n)
+                    plan = (names.plan_movies(root, ffprobe, prog) if kind == "movies"
+                            else names.plan_series(root, ffprobe, prog))
+                    job.log(f"  Nombres revisados: {len(plan.ops)} cambios propuestos")
+                    if client and plan.shows:
+                        for i, show in enumerate(plan.shows):
+                            tick(r, 1, "comparando con TMDB", show["show"], i, len(plan.shows))
+                            plan.issues += self._tmdb_missing(client, show)
+                        job.log(f"  Comparadas {len(plan.shows)} series con TMDB")
+                    plan.issues += self._mkv_without_index(
+                        job, root, kind, lambda name, i, n, r=r: tick(r, phases - 1, "MKV sin índice de saltos", name, i, n))
+                    d = plan.to_dict()
+                    for item in d["ops"] + d["issues"]:
+                        item["root"] = str(root)
+                    for show in d["shows"]:
+                        show["root"], show["group"] = str(root), show["folder"]
+                    out["ops"] += d["ops"]
+                    out["issues"] += d["issues"]
+                    out["shows"] += d["shows"]
+                    job.log(f"  Listo {root.name}: {len(plan.ops)} cambios, {len(plan.issues)} avisos")
+            except InterruptedError:
+                job.log("Escaneo cancelado")
+                job.current = ""
+                return None
             for i, op in enumerate(out["ops"]):
                 op["id"] = i
+            job.done, job.step, job.current = 1000, "Terminado", ""
             return out
         return self.start("names-scan", fn)
 
@@ -232,6 +262,7 @@ class App:
             for f in files:
                 if job.cancel:
                     break
+                job.step, job.current = "Buscando MKV sin índice de saltos", f"{f.name}  ({job.done + 1}/{len(files)})"
                 try:
                     if not core.has_front_cues(f):
                         bad.append(str(f))
@@ -248,21 +279,78 @@ class App:
 
         def fn(job: Job):
             job.total = len(paths)
-            counts = {"ok": 0, "skip": 0, "error": 0, "dry-run": 0}
+            counts = {"ok": 0, "skip": 0, "error": 0, "dry-run": 0, "stopped": ""}
             for f in paths:
                 if job.cancel:
                     job.log("Cancelado")
+                    counts["stopped"] = "cancelado"
                     break
                 probe = backup if backup.exists() else f.parent
                 if not dry_run and min_free_gb and shutil.disk_usage(probe).free < min_free_gb * 1e9:
-                    job.log(f"PARADO: queda menos de {min_free_gb} GB libres")
+                    counts["stopped"] = f"queda menos de {min_free_gb:g} GB libres en el disco"
+                    job.log(f"PARADO: {counts['stopped']}")
                     break
+                job.step = "Simulando" if dry_run else "Arreglando MKV (tarda lo que tarda copiar cada archivo)"
+                job.current = f"{f.name}  ({job.done + 1}/{len(paths)})"
                 res = core.fix_file(self.cfg.tools, f, backup, dry_run=dry_run)
                 counts[res.status] += 1
                 job.done += 1
                 job.log(f"{res.status.upper()} {f.name} {res.detail}")
             return counts
         return self.start("seek-fix", fn)
+
+    @staticmethod
+    def _mkv_without_index(job: Job, root: Path, kind: str, tick=None) -> list[names.Issue]:
+        """MKV sin indice de saltos al frente, agrupados por serie (o juntos en
+        peliculas), para mostrarlos en la ficha con su boton de arreglar."""
+        by_group: dict[str, list[str]] = {}
+        checked = 0
+        files = list(core.find_mkv([root]))
+        for f in files:
+            if tick:
+                tick(f.name, checked, len(files))
+            try:
+                if core.has_front_cues(f):
+                    continue
+            except OSError:
+                continue
+            finally:
+                checked += 1
+            rel = f.relative_to(root)
+            group = rel.parts[0] if kind == "series" and len(rel.parts) > 1 else "MKV sin índice de saltos"
+            by_group.setdefault(group, []).append(str(f))
+        n = sum(len(v) for v in by_group.values())
+        job.log(f"  MKV revisados: {checked}, sin indice de saltos: {n}")
+        return [names.Issue(str(root / g) if kind == "series" else str(root), "mkv sin indice",
+                            f"{len(files)} MKV no dejan adelantar ni atrasar en algunas TV (Android TV)",
+                            g, {"files": files})
+                for g, files in sorted(by_group.items())]
+
+    def backup_info(self) -> dict:
+        backup = Path(self.cfg.settings["backup_dir"])
+        size = files = 0
+        if backup.exists():
+            for dirpath, _d, fs in os.walk(backup):
+                for name in fs:
+                    try:
+                        size += (Path(dirpath) / name).stat().st_size
+                        files += 1
+                    except OSError:
+                        pass
+        return {"path": str(backup), "files": files, "size": size}
+
+    def backup_empty(self) -> dict:
+        """Borra de verdad los originales guardados (despues de comprobar en la
+        TV que los arreglados van bien)."""
+        backup = Path(self.cfg.settings["backup_dir"])
+        info = self.backup_info()
+        if backup.exists():
+            for child in backup.iterdir():
+                if child.is_dir() and not child.is_symlink():
+                    shutil.rmtree(child)
+                else:
+                    child.unlink()
+        return info
 
     def seek_restore(self) -> Job:
         backup = Path(self.cfg.settings["backup_dir"])
@@ -368,6 +456,8 @@ def make_handler(app: App):
                     self._json(app.logs())
                 elif url.path == "/api/version":
                     self._json(app.version(q.get("refresh") == "1"))
+                elif url.path == "/api/seek/backup":
+                    self._json(app.backup_info())
                 elif url.path == "/api/update/log":
                     self._json(app.update_log())
                 else:
@@ -405,6 +495,10 @@ def make_handler(app: App):
                 elif path == "/api/seek/fix":
                     self._json(app.seek_fix(body["files"], bool(body.get("dry_run")),
                                             float(body.get("min_free_gb", 50))).to_dict())
+                elif path == "/api/seek/backup/empty":
+                    if app.job and app.job.running:
+                        raise RuntimeError("espera a que termine la tarea en marcha")
+                    self._json(app.backup_empty())
                 elif path == "/api/seek/restore":
                     self._json(app.seek_restore().to_dict())
                 elif path == "/api/update":
