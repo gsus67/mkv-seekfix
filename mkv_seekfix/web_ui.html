@@ -38,6 +38,7 @@ button.b { background: var(--chip); color: var(--text); border: 1px solid var(--
 button.b.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
 button.b.danger { color: var(--bad); }
 button.b:disabled { opacity: .5; cursor: default; }
+button.b.small { padding: 4px 10px; font-size: 13px; }
 input, select { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line);
   border-radius: 8px; padding: 6px 8px; }
 input[type=text], input[type=password] { min-width: 0; flex: 1; }
@@ -79,7 +80,7 @@ details.scard > summary::before { content: "▸"; color: var(--muted); }
 details.scard[open] > summary::before { content: "▾"; }
 details.scard .sname { font-weight: 600; flex: 1; min-width: 160px; word-break: break-word; }
 details.scard .body { padding: 0 12px 12px; }
-.tag.warn { color: var(--warn); } .tag.rn { color: var(--accent); }
+.tag.warn { color: var(--warn); } .tag.rn { color: var(--accent); } .tag.okc { color: var(--ok); }
 .sub { font-size: 13px; font-weight: 600; margin: 12px 0 4px; }
 .seasons { display: flex; gap: 6px; flex-wrap: wrap; }
 .miss { font-size: 13px; padding: 4px 0; border-bottom: 1px dashed var(--line); }
@@ -416,8 +417,33 @@ function renderNames() {
         ${g.ops.length ? `<span class="tag rn">${g.ops.length} a renombrar</span>` : ""}
         ${missN ? `<span class="tag warn">faltan ${missN}</span>` : ""}
         ${g.issues.length ? `<span class="tag warn">${g.issues.length} avisos</span>` : ""}
-        <span class="tag">${esc(rel(g.root))}</span></summary><div class="body"></div>`;
+        <span class="tag">${esc(rel(g.root))}</span>
+        ${g.ops.length ? `<button class="b primary small" data-apply="${gi}">Aplicar esta serie</button>` : ""}
+        </summary><div class="body"></div>`;
     const body = det.querySelector(".body");
+    const applyBtn = det.querySelector("[data-apply]");
+    if (applyBtn) applyBtn.onclick = (ev) => {
+      ev.preventDefault(); ev.stopPropagation();
+      const ids = new Set([...det.querySelectorAll("[data-op]:checked")].map((c) => +c.dataset.op));
+      const ops = namesPlan.ops.filter((o) => ids.has(o.id));
+      if (!ops.length) return toast("No hay nada seleccionado en esta serie");
+      if (!confirm(`¿Aplicar ${ops.length} cambios en «${g.name}»?`)) return;
+      applyOps(ops, (j) => {
+        const res = (j.result || {}).results || [];
+        const okSrc = new Set(res.filter((r) => r.status === "ok").map((r) => r.src));
+        det.querySelectorAll("[data-op]").forEach((c) => {
+          const op = namesPlan.ops[+c.dataset.op];
+          if (op && okSrc.has(op.src)) { c.checked = false; c.disabled = true; c.closest(".ren").style.opacity = .45; }
+        });
+        namesPlan.ops = namesPlan.ops.map((o) => okSrc.has(o.src) ? {...o, done: true} : o);
+        const bad = res.length - okSrc.size;
+        applyBtn.textContent = bad ? `Aplicado con ${bad} errores` : "✓ Aplicado";
+        applyBtn.disabled = !bad;
+        det.querySelector(".sname").insertAdjacentHTML("afterend",
+          '<span class="tag okc">hecho · vuelve a escanear para ver los episodios que faltan al día</span>');
+        det.open = false;
+      });
+    };
     if (g.show && g.show.seasons) {
       const ss = Object.entries(g.show.seasons).sort((a, b) => +a[0] - +b[0]).map(([s, v]) =>
         `<span class="tag">${+s === 0 ? "Especiales" : "T" + s}: ${v.have} ep${v.last !== v.have ? ` (hasta E${v.last})` : ""}</span>`).join("");
@@ -470,7 +496,7 @@ function applyOps(ops, after) {
 $("#namesApply").onclick = () => {
   if (!namesPlan) return;
   const ids = new Set([...document.querySelectorAll("[data-op]:checked")].map((c) => +c.dataset.op));
-  const ops = namesPlan.ops.filter((o) => ids.has(o.id));
+  const ops = namesPlan.ops.filter((o) => ids.has(o.id) && !o.done);
   if (!ops.length) return toast("No hay nada seleccionado");
   if (!confirm(`¿Aplicar ${ops.length} cambios?`)) return;
   applyOps(ops, () => $("#namesScan").click());
