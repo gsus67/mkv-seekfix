@@ -96,6 +96,29 @@ def cmd_restore(args) -> int:
     return 1 if any(r.status == "error" for r in results) else 0
 
 
+def cmd_names(args) -> int:
+    from . import names
+    tools = core.Tools.from_strings(ffprobe=args.ffprobe)
+    total = 0
+    for root in args.paths:
+        plan = (names.plan_movies(Path(root), tools.ffprobe) if args.kind == "movies"
+                else names.plan_series(Path(root)))
+        for op in plan.ops:
+            print(f"{op.src}\n  -> {op.dst or '(papelera)'}  [{op.reason}]")
+        for it in plan.issues:
+            print(f"AVISO {it.problem}: {it.path}  {it.hint}")
+        total += len(plan.ops) + len(plan.issues)
+    print(f"\nPropuestas y avisos: {total}", file=sys.stderr)
+    return 1 if total else 0
+
+
+def cmd_web(args) -> int:
+    from . import web
+    web.serve(args.media_root, args.config_dir, args.host, args.port,
+              args.ffmpeg, args.ffprobe, os.environ.get("MKV_SEEKFIX_PASSWORD", ""))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="mkv-seekfix", description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -137,6 +160,24 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--dry-run", action="store_true")
     r.add_argument("--log", help="archivo de registro")
     r.set_defaults(func=cmd_restore)
+
+    n = sub.add_parser("names", help="revisar nombres para Jellyfin (solo lectura)")
+    n.add_argument("paths", nargs="+", help="carpetas de biblioteca")
+    n.add_argument("--kind", choices=["series", "movies"], default="series",
+                   help="tipo de biblioteca (def. %(default)s)")
+    n.add_argument("--ffprobe", default=os.environ.get(ENV_FFPROBE, "ffprobe"))
+    n.set_defaults(func=cmd_names)
+
+    w = sub.add_parser("web", help="abrir la interfaz web")
+    w.add_argument("--media-root", default=os.environ.get("MKV_SEEKFIX_MEDIA", "/media"),
+                   help="carpeta raiz permitida; env MKV_SEEKFIX_MEDIA (def. %(default)s)")
+    w.add_argument("--config-dir", default=os.environ.get("MKV_SEEKFIX_CONFIG", "./config"),
+                   help="ajustes, registros, papelera y respaldo; env MKV_SEEKFIX_CONFIG")
+    w.add_argument("--host", default="0.0.0.0")
+    w.add_argument("--port", type=int, default=int(os.environ.get("MKV_SEEKFIX_PORT", "8765")))
+    w.add_argument("--ffmpeg", default=os.environ.get(ENV_FFMPEG, "ffmpeg"))
+    w.add_argument("--ffprobe", default=os.environ.get(ENV_FFPROBE, "ffprobe"))
+    w.set_defaults(func=cmd_web)
     return p
 
 

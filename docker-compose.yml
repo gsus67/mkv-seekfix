@@ -1,0 +1,16 @@
+services:
+  mkv-seekfix:
+    build: .
+    container_name: mkv-seekfix
+    restart: unless-stopped
+    ports:
+      - "8765:8765"
+    environment:
+      TZ: America/Chicago
+      # Contraseña para entrar a la web (usuario cualquiera). Vacía = sin contraseña.
+      MKV_SEEKFIX_PASSWORD: ""
+    volumes:
+      # Misma ruta que usa Jellyfin dentro de su contenedor.
+      - /volume1/media:/media
+      # Ajustes, registros, papelera y respaldo de MKV.
+      - /volume1/docker/mkv-seekfix:/config
