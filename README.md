@@ -12,8 +12,8 @@ respaldo, y cada cambio de nombre queda en un registro que se puede deshacer.
 
 ## Instalar con Docker
 
-El servidor construye la imagen directamente desde este repositorio (rama
-`main`), sin registros intermedios.
+El servidor construye la imagen con el código de este repositorio (rama
+`main`), sin registros intermedios. Solo necesita Docker y `curl` (no `git`).
 
 1. Crea una carpeta, por ejemplo `/volume1/docker/mkv-seekfix`, y pon en ella
    [`docker-compose.yml`](docker-compose.yml) y
@@ -36,7 +36,7 @@ El mismo comando:
 sh actualizar.sh
 ```
 
-Baja lo último de `main`, reconstruye la imagen, reinicia el contenedor y
+Descarga lo último de `main` en `src/`, reconstruye la imagen, reinicia el contenedor y
 **borra la imagen anterior y la caché de construcción** que quedan sin uso, para
 no acumular imágenes viejas. Los ajustes y registros se conservan en `/config`.
 
