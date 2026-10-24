@@ -122,6 +122,7 @@ class App:
                     job.log(f"  Comparando {len(plan.shows)} series con TMDB")
                     for show in plan.shows:
                         plan.issues += self._tmdb_missing(client, show)
+                plan.issues += self._mkv_without_index(job, root, kind)
                 d = plan.to_dict()
                 for item in d["ops"] + d["issues"]:
                     item["root"] = str(root)
@@ -248,14 +249,16 @@ class App:
 
         def fn(job: Job):
             job.total = len(paths)
-            counts = {"ok": 0, "skip": 0, "error": 0, "dry-run": 0}
+            counts = {"ok": 0, "skip": 0, "error": 0, "dry-run": 0, "stopped": ""}
             for f in paths:
                 if job.cancel:
                     job.log("Cancelado")
+                    counts["stopped"] = "cancelado"
                     break
                 probe = backup if backup.exists() else f.parent
                 if not dry_run and min_free_gb and shutil.disk_usage(probe).free < min_free_gb * 1e9:
-                    job.log(f"PARADO: queda menos de {min_free_gb} GB libres")
+                    counts["stopped"] = f"queda menos de {min_free_gb:g} GB libres en el disco"
+                    job.log(f"PARADO: {counts['stopped']}")
                     break
                 res = core.fix_file(self.cfg.tools, f, backup, dry_run=dry_run)
                 counts[res.status] += 1
@@ -263,6 +266,56 @@ class App:
                 job.log(f"{res.status.upper()} {f.name} {res.detail}")
             return counts
         return self.start("seek-fix", fn)
+
+    @staticmethod
+    def _mkv_without_index(job: Job, root: Path, kind: str) -> list[names.Issue]:
+        """MKV sin indice de saltos al frente, agrupados por serie (o juntos en
+        peliculas), para mostrarlos en la ficha con su boton de arreglar."""
+        by_group: dict[str, list[str]] = {}
+        checked = 0
+        for f in core.find_mkv([root]):
+            try:
+                if core.has_front_cues(f):
+                    continue
+            except OSError:
+                continue
+            finally:
+                checked += 1
+            rel = f.relative_to(root)
+            group = rel.parts[0] if kind == "series" and len(rel.parts) > 1 else "MKV sin índice de saltos"
+            by_group.setdefault(group, []).append(str(f))
+        n = sum(len(v) for v in by_group.values())
+        job.log(f"  MKV revisados: {checked}, sin indice de saltos: {n}")
+        return [names.Issue(str(root / g) if kind == "series" else str(root), "mkv sin indice",
+                            f"{len(files)} MKV no dejan adelantar ni atrasar en algunas TV (Android TV)",
+                            g, {"files": files})
+                for g, files in sorted(by_group.items())]
+
+    def backup_info(self) -> dict:
+        backup = Path(self.cfg.settings["backup_dir"])
+        size = files = 0
+        if backup.exists():
+            for dirpath, _d, fs in os.walk(backup):
+                for name in fs:
+                    try:
+                        size += (Path(dirpath) / name).stat().st_size
+                        files += 1
+                    except OSError:
+                        pass
+        return {"path": str(backup), "files": files, "size": size}
+
+    def backup_empty(self) -> dict:
+        """Borra de verdad los originales guardados (despues de comprobar en la
+        TV que los arreglados van bien)."""
+        backup = Path(self.cfg.settings["backup_dir"])
+        info = self.backup_info()
+        if backup.exists():
+            for child in backup.iterdir():
+                if child.is_dir() and not child.is_symlink():
+                    shutil.rmtree(child)
+                else:
+                    child.unlink()
+        return info
 
     def seek_restore(self) -> Job:
         backup = Path(self.cfg.settings["backup_dir"])
@@ -368,6 +421,8 @@ def make_handler(app: App):
                     self._json(app.logs())
                 elif url.path == "/api/version":
                     self._json(app.version(q.get("refresh") == "1"))
+                elif url.path == "/api/seek/backup":
+                    self._json(app.backup_info())
                 elif url.path == "/api/update/log":
                     self._json(app.update_log())
                 else:
@@ -405,6 +460,10 @@ def make_handler(app: App):
                 elif path == "/api/seek/fix":
                     self._json(app.seek_fix(body["files"], bool(body.get("dry_run")),
                                             float(body.get("min_free_gb", 50))).to_dict())
+                elif path == "/api/seek/backup/empty":
+                    if app.job and app.job.running:
+                        raise RuntimeError("espera a que termine la tarea en marcha")
+                    self._json(app.backup_empty())
                 elif path == "/api/seek/restore":
                     self._json(app.seek_restore().to_dict())
                 elif path == "/api/update":

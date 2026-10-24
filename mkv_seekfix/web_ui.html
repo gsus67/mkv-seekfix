@@ -201,6 +201,15 @@ details.scard .body { padding: 0 12px 12px; }
     <pre class="log" id="updLog" hidden></pre>
   </div>
   <div class="card">
+    <h2>Respaldo de MKV arreglados</h2>
+    <p class="small" id="bkInfo">…</p>
+    <div class="row">
+      <button class="b danger" id="bkEmpty">Vaciar respaldo</button>
+      <span class="small muted">Vacíalo cuando compruebes en la TV que los arreglados se ven y se pueden adelantar.
+        Después ya no se pueden restaurar.</span>
+    </div>
+  </div>
+  <div class="card">
     <h2>Ajustes</h2>
     <div class="row" style="margin-bottom:8px"><label style="width:150px">Clave de TMDB</label>
       <input type="password" id="sTmdb" placeholder="clave v3 o token de lectura v4"></div>
@@ -261,6 +270,7 @@ document.querySelectorAll("nav button").forEach((b) => b.onclick = () => {
   document.querySelectorAll("nav button").forEach((x) => x.classList.toggle("on", x === b));
   document.querySelectorAll("section").forEach((s) => s.classList.toggle("on", s.id === b.dataset.tab));
   if (b.dataset.tab === "registros") loadLogs();
+  if (b.dataset.tab === "ajustes") loadBackup();
 });
 
 // ---------------------------------------------------------------- carpetas
@@ -341,6 +351,12 @@ function issueEl(it) {
       <input type="number" placeholder="año" min="1900" max="2100" style="width:90px">
       <button class="b" data-a="tmdb">Buscar en TMDB</button>
       <button class="b primary" data-a="year">Renombrar</button></div><div class="small muted" data-r></div>`;
+  } else if (it.problem === "mkv sin indice") {
+    const fs = it.data.files || [];
+    extra = `<details style="margin-top:6px"><summary class="small">Ver los ${fs.length} archivos</summary>
+      <div class="small muted" style="word-break:break-all">${fs.map((f) => esc(f.split("/").slice(-2).join("/"))).join("<br>")}</div></details>
+      <div class="row" style="margin-top:6px"><button class="b primary small" data-a="seekfix">Arreglar estos ${fs.length}</button>
+      <span class="small muted">Se reempaquetan sin recodificar; el original va al respaldo.</span></div>`;
   } else if (it.problem === "pelicula duplicada" && it.data.files) {
     extra = it.data.files.map((f) => `<div class="row" style="margin-top:6px">
       <span class="p small" style="flex:1">${esc(rel(f.path))}<br><span class="muted">${esc(f.info)}</span></span>
@@ -364,6 +380,19 @@ function issueEl(it) {
       const r = await api("/api/names/year", {path: it.path, root: it.root, year: +yearIn.value});
       applyOps(r.ops, () => d.remove());
     } catch (e) { toast(e.message); }
+  });
+  d.querySelectorAll("button[data-a=seekfix]").forEach((b) => b.onclick = () => {
+    const files = it.data.files || [];
+    if (!confirm(`¿Arreglar ${files.length} MKV? Tarda lo que tarda copiar cada archivo; los originales van al respaldo.`)) return;
+    b.disabled = true; b.textContent = "Arreglando…";
+    startJob("/api/seek/fix", {files, dry_run: false}, (j) => {
+      const c = j.result || {};
+      const txt = `ok ${c.ok || 0}` + (c.skip ? `, omitidos ${c.skip}` : "") + (c.error ? `, errores ${c.error}` : "");
+      if (c.stopped) { toast("Parado: " + c.stopped); b.textContent = `Parado: ${c.stopped}`; b.disabled = false; return; }
+      toast("MKV: " + txt);
+      b.textContent = c.error ? `Hecho con errores (${txt})` : `✓ Arreglados (${txt})`;
+      b.disabled = !c.error;
+    }, "#namesBar", "#namesInfo");
   });
   d.querySelectorAll("button[data-trash]").forEach((b) => b.onclick = () => {
     if (!confirm("¿Mover a la papelera?\n" + b.dataset.trash)) return;
@@ -402,8 +431,9 @@ function renderNames() {
   const nOps = namesPlan.ops.length;
   const nMiss = groups.reduce((a, g) => a + g.missing.reduce((b, m) => b + (m.data.missing || []).length, 0), 0);
   const clean = (namesPlan.shows || []).length - groups.filter((g) => g.show).length;
+  const nIdx = namesPlan.issues.filter((i) => i.problem === "mkv sin indice").reduce((a, i) => a + i.data.files.length, 0);
   $("#namesSummary").textContent = groups.length
-    ? `${groups.length} series o grupos con algo que revisar · ${nOps} cambios de nombre · ${nMiss} episodios que faltan`
+    ? `${groups.length} series o grupos con algo que revisar · ${nOps} cambios de nombre · ${nMiss} episodios que faltan · ${nIdx} MKV sin índice`
       + (clean > 0 ? ` · ${clean} series sin problemas` : "")
       + " · Al renombrar, Jellyfin puede perder la marca de «visto»."
     : "Todo en orden: no hay nada que revisar.";
@@ -411,12 +441,15 @@ function renderNames() {
     const det = document.createElement("details");
     det.className = "scard"; det.dataset.name = g.name.toLowerCase();
     const missN = g.missing.reduce((a, m) => a + (m.data.missing || []).length, 0);
+    const idxN = g.issues.filter((i) => i.problem === "mkv sin indice").reduce((a, i) => a + i.data.files.length, 0);
+    const otherN = g.issues.filter((i) => i.problem !== "mkv sin indice").length;
     det.innerHTML = `<summary>
         ${g.ops.length ? `<input type="checkbox" data-group="${gi}" checked onclick="event.stopPropagation()">` : ""}
         <span class="sname">${esc(g.name)}</span>
         ${g.ops.length ? `<span class="tag rn">${g.ops.length} a renombrar</span>` : ""}
         ${missN ? `<span class="tag warn">faltan ${missN}</span>` : ""}
-        ${g.issues.length ? `<span class="tag warn">${g.issues.length} avisos</span>` : ""}
+        ${idxN ? `<span class="tag warn">${idxN} MKV sin índice</span>` : ""}
+        ${otherN ? `<span class="tag warn">${otherN} avisos</span>` : ""}
         <span class="tag">${esc(rel(g.root))}</span>
         ${g.ops.length ? `<button class="b primary small" data-apply="${gi}">Aplicar esta serie</button>` : ""}
         </summary><div class="body"></div>`;
@@ -527,7 +560,7 @@ function seekRun(dry) {
   if (!dry && !confirm(`¿Arreglar ${files.length} archivos? Los originales irán al respaldo.`)) return;
   startJob("/api/seek/fix", {files, dry_run: dry}, (j) => {
     const c = j.result || {};
-    toast(`ok=${c.ok || 0} simulados=${c["dry-run"] || 0} omitidos=${c.skip || 0} errores=${c.error || 0}`);
+    toast((c.stopped ? `PARADO (${c.stopped}) · ` : "") + `ok=${c.ok || 0} simulados=${c["dry-run"] || 0} omitidos=${c.skip || 0} errores=${c.error || 0}`);
     $("#seekInfo").textContent = j.lines.slice(-1)[0] || "";
   }, "#seekBar", "#seekInfo");
 }
@@ -612,8 +645,24 @@ $("#updRun").onclick = async () => {
   }, 2000);
 };
 
+async function loadBackup() {
+  try {
+    const b = await api("/api/seek/backup");
+    $("#bkInfo").textContent = b.files ? `${b.files} originales guardados, ${(b.size / 1e9).toFixed(1)} GB en ${b.path}`
+      : `Vacío (${b.path})`;
+    $("#bkEmpty").disabled = !b.files;
+  } catch (e) { $("#bkInfo").textContent = e.message; }
+}
+$("#bkEmpty").onclick = async () => {
+  if (!confirm("¿Borrar para siempre los originales del respaldo? Ya no se podrán restaurar.")) return;
+  try { const r = await api("/api/seek/backup/empty", {}); toast(`Borrados ${r.files} archivos (${(r.size / 1e9).toFixed(1)} GB)`); }
+  catch (e) { toast(e.message); }
+  loadBackup();
+};
+
 (async () => {
   state = await api("/api/state");
+  loadBackup();
   loadVersion(false);
   const s = state.settings;
   $("#sTmdb").value = s.tmdb_key; $("#sLang").value = s.tmdb_language;
