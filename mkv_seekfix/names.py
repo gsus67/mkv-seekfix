@@ -320,8 +320,39 @@ def _plan_show(plan: Plan, show_dir: Path, taken: set[str],
                             ", ".join(f"{n} ({d} min)" for n, d in long)
                     data["long_files"] = [n for n, _ in long]
             plan.issues.append(Issue(str(show_dir), "faltan episodios", hint, group, data))
+    seasons_of = {p: fs for p, fs, _, _ in good_files}
+    seasons_of.update({p: g.season for p, g, _ in guesses})
+    _plan_season_dirs(plan, show_dir, seasons_of, group, taken)
+
     plan.shows.append({"path": str(show_dir), "show": show, "folder": show_dir.name,
                        "seasons": {s: {"have": len(e), "last": max(e)} for s, e in have.items()}})
+
+
+def _plan_season_dirs(plan: Plan, show_dir: Path, seasons_of: dict[Path, int],
+                      group: str, taken: set[str]) -> None:
+    """Carpetas de temporada siempre como 'Season 01' ('Season 00' especiales).
+    La temporada sale del nombre de la carpeta o, si no lo dice, de sus
+    episodios (solo si todos son de la misma). Va al final del plan de la serie:
+    primero se renombran los archivos y luego su carpeta."""
+    for d in sorted(p for p in show_dir.iterdir() if p.is_dir()):
+        if d.name.startswith(".") or d.name.lower() in EXTRAS_DIRS:
+            continue
+        found = {s for f, s in seasons_of.items() if d in f.parents}
+        season = season_of_dir(d.name)
+        if season is None or (found and found != {season}):
+            if len(found) != 1:
+                continue
+            season = found.pop()
+        target = d.with_name(f"Season {season:02d}")
+        if target.name == d.name:
+            continue
+        if target.exists() or str(target) in taken or \
+                any(t.startswith(str(target) + "/") for t in taken):
+            plan.issues.append(Issue(str(d), "carpeta de temporada repetida",
+                                     f"ya existe «{target.name}»: junta las carpetas a mano", group))
+            continue
+        taken.add(str(target))
+        plan.ops.append(Op(str(d), str(target), "rename", "formato de temporada", group))
 
 
 def _episode_title(stem: str, end: int) -> str:
