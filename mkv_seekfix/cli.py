@@ -102,7 +102,7 @@ def cmd_names(args) -> int:
     total = 0
     for root in args.paths:
         plan = (names.plan_movies(Path(root), tools.ffprobe) if args.kind == "movies"
-                else names.plan_series(Path(root)))
+                else names.plan_series(Path(root), tools.ffprobe))
         for op in plan.ops:
             print(f"{op.src}\n  -> {op.dst or '(papelera)'}  [{op.reason}]")
         for it in plan.issues:

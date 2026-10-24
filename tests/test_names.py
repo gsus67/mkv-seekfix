@@ -1,3 +1,5 @@
+import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -121,6 +123,22 @@ class SeriesTests(unittest.TestCase):
         touch(self.root, "Show/Season 1/3.mkv", "Show/Season 1/3.es.srt")
         _, r = self.plan()
         self.assertEqual(r["Show/Season 1/3.es.srt"], "Show/Season 1/Show - S01E03.es.srt")
+
+
+@unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "requiere ffmpeg")
+class LongFileTests(unittest.TestCase):
+    def test_double_length_file_is_flagged(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            season = root / "Solo/Season 02"
+            season.mkdir(parents=True)
+            for ep, secs in ((1, 240), (2, 120), (3, 120), (5, 120)):
+                subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", f"color=d={secs}:s=16x16:r=1",
+                                "-c:v", "libx264", str(season / f"Solo - S02E{ep:02d}.mkv")], check=True)
+            p = names.plan_series(root, ["ffprobe"])
+            miss = [i for i in p.issues if i.problem == "faltan episodios"][0]
+            self.assertEqual(miss.data["missing"], [4])
+            self.assertEqual(miss.data["long_files"], ["Solo - S02E01.mkv"])
 
 
 class MovieTests(unittest.TestCase):

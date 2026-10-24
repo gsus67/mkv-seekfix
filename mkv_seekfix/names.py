@@ -181,8 +181,10 @@ def _add_rename(plan: Plan, src: Path, dst: Path, reason: str, group: str,
             plan.ops.append(Op(str(side), str(sdst), "rename", "acompaña al video", group))
 
 
-def plan_series(root: Path) -> Plan:
-    """Revisa una biblioteca de series/anime (una carpeta por serie)."""
+def plan_series(root: Path, ffprobe: Optional[list[str]] = None) -> Plan:
+    """Revisa una biblioteca de series/anime (una carpeta por serie). Con
+    ffprobe, en las temporadas con huecos avisa de archivos que duran el doble
+    (pueden traer dos episodios)."""
     root = Path(root)
     plan = Plan()
     taken: set[str] = set()
@@ -191,11 +193,25 @@ def plan_series(root: Path) -> Plan:
             plan.issues.append(Issue(str(f), "archivo suelto en la raiz",
                                      "debe ir dentro de la carpeta de una serie"))
     for show_dir in sorted(p for p in root.iterdir() if p.is_dir() and not p.name.startswith((".", "#", "@"))):
-        _plan_show(plan, show_dir, taken)
+        _plan_show(plan, show_dir, taken, ffprobe)
     return plan
 
 
-def _plan_show(plan: Plan, show_dir: Path, taken: set[str]) -> None:
+def _long_files(ffprobe: list[str], files: list[Path]) -> list[tuple[str, int]]:
+    """Archivos que duran 1,7 veces o mas la mediana de la temporada."""
+    durs = []
+    for f in files:
+        d = probe_media(ffprobe, f).duration_min
+        if d:
+            durs.append((f, d))
+    if len(durs) < 3:
+        return []
+    med = sorted(d for _, d in durs)[len(durs) // 2]
+    return [(f.name, d) for f, d in durs if d >= 1.7 * med]
+
+
+def _plan_show(plan: Plan, show_dir: Path, taken: set[str],
+               ffprobe: Optional[list[str]] = None) -> None:
     show = show_name(show_dir.name)
     group = show_dir.name
     # (archivo, temporada de su carpeta, carpeta es raiz de la serie)
@@ -285,10 +301,17 @@ def _plan_show(plan: Plan, show_dir: Path, taken: set[str]) -> None:
         prev_last = hi
         missing = sorted(set(range(start, hi + 1)) - eps)
         if missing:
-            plan.issues.append(Issue(str(show_dir), "faltan episodios",
-                                     f"temporada {s}: faltan {_ranges(missing)} (tiene {len(eps)}, hasta el {max(eps)})",
-                                     group, {"season": s, "missing": missing, "have": len(eps),
-                                             "last": max(eps), "show": show}))
+            hint = f"temporada {s}: faltan {_ranges(missing)} (tiene {len(eps)}, hasta el {max(eps)})"
+            data = {"season": s, "missing": missing, "have": len(eps), "last": max(eps), "show": show}
+            if ffprobe:
+                files = [p for p, fs, _, _ in good_files if fs == s] + \
+                        [p for p, g, _ in guesses if g.season == s]
+                long = _long_files(ffprobe, files)
+                if long:
+                    hint += "; ojo, duran el doble y pueden traer dos episodios: " + \
+                            ", ".join(f"{n} ({d} min)" for n, d in long)
+                    data["long_files"] = [n for n, _ in long]
+            plan.issues.append(Issue(str(show_dir), "faltan episodios", hint, group, data))
     plan.shows.append({"path": str(show_dir), "show": show, "folder": show_dir.name,
                        "seasons": {s: {"have": len(e), "last": max(e)} for s, e in have.items()}})
 

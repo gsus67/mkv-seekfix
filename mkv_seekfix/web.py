@@ -117,7 +117,7 @@ class App:
             client = tmdb.Tmdb(key, self.cfg.settings.get("tmdb_language", "es-ES")) if key else None
             for root, kind in checked:
                 job.log(f"Revisando {root} ({kind})")
-                plan = names.plan_movies(root, ffprobe) if kind == "movies" else names.plan_series(root)
+                plan = names.plan_movies(root, ffprobe) if kind == "movies" else names.plan_series(root, ffprobe)
                 if client and plan.shows:
                     job.log(f"  Comparando {len(plan.shows)} series con TMDB")
                     for show in plan.shows:
