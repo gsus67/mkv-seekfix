@@ -114,7 +114,7 @@ class SeriesTests(unittest.TestCase):
         p, r = self.plan()
         miss = [i.data["missing"] for i in p.issues if i.problem == "faltan episodios"]
         self.assertEqual(miss, [[100]])
-        self.assertEqual(r, {})
+        self.assertEqual(r, {"OP/S1": "OP/Season 01", "OP/S2": "OP/Season 02"})
 
     def test_mixed_absolute_tail_is_renamed(self):
         touch(self.root, *[f"FF/T1/FF - S01E{n:02d}.mkv" for n in range(1, 25)],
@@ -141,6 +141,34 @@ class SeriesTests(unittest.TestCase):
                          "Chainsaw Man - S01E09.mkv")
         self.assertEqual(Path(r["Lioness/Season 02/Lioness - S02E08.mkv.mkv"]).name, "Lioness - S02E08.mkv")
         self.assertNotIn("Black Clover (2017)/Season 01/Black Clover (2017) - S01E37 - The One with No Magic.mkv", r)
+
+    def test_season_folders_get_same_format(self):
+        touch(self.root, "A/Temporada 1/A - S01E01.mkv", "A/S03 Arco Rojo/A - S03E01.mkv",
+              "A/Specials/A - S00E01.mkv", "A/Season 02/A - S02E01.mkv",
+              "OP/East Blue (1-61)/OP - S01E001.mkv", "OP/Mezcla/OP - S02E062.mkv",
+              "OP/Mezcla/OP - S03E131.mkv", "B/Temporada 1/B - S01E01.mkv", "B/Season 01/B - S01E02.mkv")
+        p, r = self.plan()
+        self.assertEqual(r["A/Temporada 1"], "A/Season 01")
+        self.assertEqual(r["A/S03 Arco Rojo"], "A/Season 03")
+        self.assertEqual(r["A/Specials"], "A/Season 00")
+        self.assertEqual(r["OP/East Blue (1-61)"], "OP/Season 01")
+        self.assertNotIn("A/Season 02", r)
+        self.assertNotIn("OP/Mezcla", r)
+        self.assertNotIn("B/Temporada 1", r)
+        self.assertIn("carpeta de temporada repetida", {i.problem for i in p.issues})
+        # Las carpetas van despues de los archivos de su serie.
+        kinds = [Path(o.src).suffix == "" for o in p.ops if o.group == "A"]
+        self.assertEqual(kinds, sorted(kinds))
+
+    def test_apply_files_then_folder_and_undo(self):
+        touch(self.root, "Show/Temporada 1/3.mkv")
+        plan = names.plan_series(self.root)
+        log = self.root.parent / (self.root.name + "-log.jsonl")
+        res = names.apply_ops(plan.ops, log, None)
+        self.assertTrue(all(x["status"] == "ok" for x in res), res)
+        self.assertTrue((self.root / "Show/Season 01/Show - S01E03.mkv").exists())
+        names.undo_log(log)
+        self.assertTrue((self.root / "Show/Temporada 1/3.mkv").exists())
 
     def test_sidecar_follows_video(self):
         touch(self.root, "Show/Season 1/3.mkv", "Show/Season 1/3.es.srt")
