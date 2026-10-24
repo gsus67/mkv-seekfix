@@ -26,7 +26,7 @@ El servidor construye la imagen con el código de este repositorio (rama
    sh actualizar.sh
    ```
 
-Se abre en `http://IP-DEL-SERVIDOR:8765`.
+Se abre en `http://IP-DEL-SERVIDOR:8765` (puerto configurable en el compose).
 
 ### Actualizar
 
