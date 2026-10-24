@@ -1,7 +1,7 @@
 services:
   mkv-seekfix:
-    # Se construye directamente desde GitHub (rama main).
-    build: https://github.com/gsus67/mkv-seekfix.git#main
+    # actualizar.sh descarga aqui el codigo de GitHub (rama main) y construye.
+    build: ./src
     image: mkv-seekfix:latest
     container_name: mkv-seekfix
     restart: unless-stopped

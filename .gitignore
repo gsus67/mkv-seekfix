@@ -6,3 +6,5 @@ logs/
 __pycache__/
 *.seekfix-tmp
 .venv/
+src/
+src.new/
