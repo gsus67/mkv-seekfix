@@ -1,6 +1,8 @@
 services:
   mkv-seekfix:
-    build: .
+    # Se construye directamente desde GitHub (rama main).
+    build: https://github.com/gsus67/mkv-seekfix.git#main
+    image: mkv-seekfix:latest
     container_name: mkv-seekfix
     restart: unless-stopped
     ports:
@@ -13,4 +15,6 @@ services:
       # Misma ruta que usa Jellyfin dentro de su contenedor.
       - /volume1/media:/media
       # Ajustes, registros, papelera y respaldo de MKV.
-      - /volume1/docker/mkv-seekfix:/config
+      - /volume1/docker/mkv-seekfix/config:/config
+
+# Instalar y actualizar: sh actualizar.sh (en esta misma carpeta)
