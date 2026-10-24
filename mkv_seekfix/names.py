@@ -46,6 +46,7 @@ P_TEMP_CAP = re.compile(r"(?i)temporada\s*(\d{1,2})\D+?cap[ií]tulo\s*(\d{1,4})"
 P_DOT = re.compile(r"(?<!\d)(?<!\d\.)(\d{1,2})\.(\d{1,3})(?!\d)(?!\.\d)")
 P_MULTI = re.compile(r"(?<![\dA-Za-z])(\d{1,4})-(\d{1,4})(?![\dA-Za-z])")
 P_NUM = re.compile(r"(?<![\dA-Za-z])(\d{1,4})(?![\dA-Za-z])")
+P_ID_EP = re.compile(r"\d{2,6}_(\d{1,4})")
 
 
 @dataclass
@@ -149,6 +150,10 @@ def guess_episode(stem: str, show: str, dir_season: Optional[int]) -> Optional[E
     m = P_MULTI.search(clean)
     if m and int(m.group(2)) == int(m.group(1)) + 1:
         return EpGuess(dir_season, int(m.group(1)), int(m.group(2)), absolute_ok=True)
+    # Descargas tipo "2995_01": identificador de la serie y numero de episodio.
+    m = P_ID_EP.fullmatch(stem.strip())
+    if m:
+        return EpGuess(dir_season, int(m.group(1)), absolute_ok=True)
     nums = [n for n in P_NUM.findall(clean) if not YEAR.fullmatch(n)]
     if len(nums) == 1:
         return EpGuess(dir_season, int(nums[0]), absolute_ok=True)
