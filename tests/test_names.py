@@ -99,6 +99,24 @@ class SeriesTests(unittest.TestCase):
         self.assertIn("E03-E04", miss[0].hint)
         self.assertEqual(p.shows[0]["seasons"][1], {"have": 5, "last": 7})
 
+    def test_absolute_seasons_are_not_missing(self):
+        touch(self.root, *[f"OP/S1/OP - S01E{n:02d}.mkv" for n in range(1, 62)],
+              *[f"OP/S2/OP - S02E{n:03d}.mkv" for n in range(62, 131) if n != 100])
+        p, r = self.plan()
+        miss = [i.data["missing"] for i in p.issues if i.problem == "faltan episodios"]
+        self.assertEqual(miss, [[100]])
+        self.assertEqual(r, {})
+
+    def test_mixed_absolute_tail_is_renamed(self):
+        touch(self.root, *[f"FF/T1/FF - S01E{n:02d}.mkv" for n in range(1, 25)],
+              *[f"FF/T2/FF - S02E{n:02d}.mkv" for n in range(1, 25)],
+              *[f"FF/T3/FF - S03E{n:02d}.mkv" for n in range(1, 14)],
+              "FF/T3/[CR] FF - S03E71 [1080p].mkv", "FF/T3/[CR] FF - S03E73 [1080p].mkv")
+        p, r = self.plan()
+        self.assertEqual(r["FF/T3/[CR] FF - S03E71 [1080p].mkv"], "FF/T3/FF - S03E23.mkv")
+        miss = [i.data["missing"] for i in p.issues if i.problem == "faltan episodios"]
+        self.assertEqual(miss, [list(range(14, 23)) + [24]])
+
     def test_sidecar_follows_video(self):
         touch(self.root, "Show/Season 1/3.mkv", "Show/Season 1/3.es.srt")
         _, r = self.plan()
@@ -125,10 +143,13 @@ class MovieTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             touch(root, "Papillon.mkv", "Oppenheimer 2023.mp4", "Oppenheimer (2023) IMAX/opp.mkv",
-                  "Coleccion (2003-2017)/Piratas (2003).mkv")
+                  "Coleccion (2003-2017)/Piratas - La perla negra (2003).mkv",
+                  "Coleccion (2003-2017)/Piratas - El cofre (2006).mkv")
             p = names.plan_movies(root)
             self.assertEqual([i.path for i in p.issues if i.problem == "pelicula sin año"], [str(root / "Papillon.mkv")])
-            self.assertTrue(any(i.problem == "pelicula duplicada" for i in p.issues))
+            dups = [i for i in p.issues if i.problem == "pelicula duplicada"]
+            self.assertEqual(len(dups), 1)
+            self.assertIn("Oppenheimer", dups[0].path)
             op = names.plan_movie_year(root / "Papillon.mkv", 1973, root)[0]
             self.assertEqual(Path(op.dst).name, "Papillon (1973).mkv")
 

@@ -212,11 +212,14 @@ def _plan_show(plan: Plan, show_dir: Path, taken: set[str]) -> None:
     guesses: list[tuple[Path, EpGuess, bool]] = []
     have: dict[int, set[int]] = {}  # temporada -> episodios presentes (ya bien nombrados)
     max_ep = 0
+    good_files: list[tuple[Path, int, int, Optional[int]]] = []
     for p, dseason, loose in entries:
         good = GOOD_EP.search(p.name)
         if good:
             s, e = int(good.group(1)), int(good.group(2))
-            have.setdefault(s, set()).update(range(e, int(good.group(3) or e) + 1))
+            e2 = int(good.group(3)) if good.group(3) else None
+            have.setdefault(s, set()).update(range(e, (e2 or e) + 1))
+            good_files.append((p, s, e, e2))
             if re.search(r"(\.(mkv|mp4|avi|m4v|ts)){2,}$", p.name, re.I):
                 base = re.sub(r"(\.(mkv|mp4|avi|m4v|ts))+$", "", p.name, flags=re.I)
                 _add_rename(plan, p, p.with_name(base + p.suffix), "extension repetida", group, taken)
@@ -263,9 +266,24 @@ def _plan_show(plan: Plan, show_dir: Path, taken: set[str]) -> None:
         _add_rename(plan, p, folder / name, reason, group, taken)
         have.setdefault(g.season, set()).update(range(ep, (ep2 or ep) + 1))
 
+    _fix_mixed_numbering(plan, show, group, good_files, have, taken)
+
+    prev_last = None
     for s in sorted(have):
         eps = have[s]
-        missing = sorted(set(range(1, max(eps) + 1)) - eps) if s > 0 else []
+        if s == 0:
+            continue
+        lo, hi = min(eps), max(eps)
+        # Temporada con numeracion absoluta (One Piece S09E311): se cuenta desde
+        # donde acabo la anterior, no desde el 1.
+        if s >= 2 and lo > 1 and prev_last is not None and prev_last < lo:
+            start = prev_last + 1
+        elif s >= 2 and lo > 1 and prev_last is None:
+            start = lo
+        else:
+            start = 1
+        prev_last = hi
+        missing = sorted(set(range(start, hi + 1)) - eps)
         if missing:
             plan.issues.append(Issue(str(show_dir), "faltan episodios",
                                      f"temporada {s}: faltan {_ranges(missing)} (tiene {len(eps)}, hasta el {max(eps)})",
@@ -273,6 +291,35 @@ def _plan_show(plan: Plan, show_dir: Path, taken: set[str]) -> None:
                                              "last": max(eps), "show": show}))
     plan.shows.append({"path": str(show_dir), "show": show, "folder": show_dir.name,
                        "seasons": {s: {"have": len(e), "last": max(e)} for s, e in have.items()}})
+
+
+def _fix_mixed_numbering(plan: Plan, show: str, group: str,
+                         good_files: list[tuple[Path, int, int, Optional[int]]],
+                         have: dict[int, set[int]], taken: set[str]) -> None:
+    """Temporada que empieza en E01 pero tiene una cola con numeros absolutos
+    (Fire Force S03E01-E13 y S03E71-E73): la cola se pasa a numeracion de la
+    temporada restando los episodios de las temporadas anteriores."""
+    for s in sorted(have):
+        eps = sorted(have[s])
+        if s < 2 or not eps or eps[0] != 1 or len(eps) < 2:
+            continue
+        gaps = [(eps[i + 1] - eps[i], i) for i in range(len(eps) - 1)]
+        jump, idx = max(gaps)
+        if jump <= 10:
+            continue
+        low, high = set(eps[:idx + 1]), eps[idx + 1:]
+        offset = sum(max(have[t]) for t in have if 1 <= t < s and have[t] and min(have[t]) == 1)
+        if not offset or high[0] - offset <= max(low) or any(e - offset in low for e in high):
+            continue
+        pad = 3 if max(eps) - offset >= 100 else 2
+        for p, fs, e, e2 in good_files:
+            if fs != s or e < high[0]:
+                continue
+            ne, ne2 = e - offset, (e2 - offset if e2 else None)
+            code = f"S{s:02d}E{ne:0{pad}d}" + (f"-E{ne2:0{pad}d}" if ne2 else "")
+            _add_rename(plan, p, p.with_name(f"{show} - {code}{p.suffix.lower()}"),
+                        f"numero absoluto dentro de la temporada (E{e} = E{ne})", group, taken)
+        have[s] = low | {e - offset for e in high}
 
 
 def _ranges(nums: list[int]) -> str:
@@ -387,7 +434,15 @@ def plan_movies(root: Path, ffprobe: Optional[list[str]] = None) -> Plan:
     root = Path(root)
     plan = Plan()
     groups: dict[tuple[str, Optional[int]], list[Path]] = {}
-    for video, folder in _movie_files(root):
+    files = _movie_files(root)
+    per_folder: dict[Path, int] = {}
+    for _, folder in files:
+        if folder:
+            per_folder[folder] = per_folder.get(folder, 0) + 1
+    for video, folder in files:
+        # Una carpeta con varias peliculas (una coleccion): cada archivo es la suya.
+        if folder and per_folder[folder] > 1:
+            folder = None
         title, year = movie_title(folder.name if folder else video.name)
         if year is None and folder:
             title, year = movie_title(video.name)
