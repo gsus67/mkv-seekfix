@@ -39,6 +39,13 @@ class SeriesTests(unittest.TestCase):
         self.assertEqual(r["Spy x Family/Season 1/1.mp4"], "Spy x Family/Season 1/Spy x Family - S01E01.mp4")
         self.assertEqual(r["Spy x Family/Season 1/12.mp4"], "Spy x Family/Season 1/Spy x Family - S01E12.mp4")
 
+    def test_download_id_underscore_episode(self):
+        touch(self.root, "My Dress Up Darling/Season 02/2995_01.mp4",
+              "My Dress Up Darling/Season 02/My Dress Up Darling - S02E02.mkv")
+        _, r = self.plan()
+        self.assertEqual(r["My Dress Up Darling/Season 02/2995_01.mp4"],
+                         "My Dress Up Darling/Season 02/My Dress Up Darling - S02E01.mp4")
+
     def test_loose_episodes_get_season_folder(self):
         touch(self.root, "Horimiya/01.mp4")
         _, r = self.plan()
