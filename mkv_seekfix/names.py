@@ -236,9 +236,6 @@ def _plan_show(plan: Plan, show_dir: Path, taken: set[str],
             e2 = int(good.group(3)) if good.group(3) else None
             have.setdefault(s, set()).update(range(e, (e2 or e) + 1))
             good_files.append((p, s, e, e2))
-            if re.search(r"(\.(mkv|mp4|avi|m4v|ts)){2,}$", p.name, re.I):
-                base = re.sub(r"(\.(mkv|mp4|avi|m4v|ts))+$", "", p.name, flags=re.I)
-                _add_rename(plan, p, p.with_name(base + p.suffix), "extension repetida", group, taken)
             continue
         g = guess_episode(p.stem, show, dseason if not loose else None)
         if g is None:
@@ -282,7 +279,11 @@ def _plan_show(plan: Plan, show_dir: Path, taken: set[str],
         _add_rename(plan, p, folder / name, reason, group, taken)
         have.setdefault(g.season, set()).update(range(ep, (ep2 or ep) + 1))
 
-    _fix_mixed_numbering(plan, show, group, good_files, have, taken)
+    fixed = _fix_mixed_numbering(plan, show, group, good_files, have, taken)
+    for p, s, e, e2 in good_files:
+        if p not in fixed:
+            pad = 3 if max(have.get(s) or {0}) >= 100 else 2
+            _tidy_name(plan, p, show, show_dir.name, s, e, e2, pad, group, taken)
 
     prev_last = None
     for s in sorted(have):
@@ -316,12 +317,47 @@ def _plan_show(plan: Plan, show_dir: Path, taken: set[str],
                        "seasons": {s: {"have": len(e), "last": max(e)} for s, e in have.items()}})
 
 
+def _episode_title(stem: str, end: int) -> str:
+    """Titulo que va despues de SxxEyy: ' - Titulo' o '.Titulo.Con.Puntos.1080p'."""
+    rest = re.sub(r"\[[^\]]*\]|\{[^}]*\}|\([^)]*\)", " ", stem[end:])
+    rest = re.sub(r"(\.(mkv|mp4|avi|m4v|ts))+$", "", rest, flags=re.I)
+    if " " not in rest.strip(" .-_"):
+        rest = rest.replace(".", " ").replace("_", " ")
+    t = TAGS.search(rest)
+    if t:
+        rest = rest[:t.start()]
+    rest = re.sub(r"\s+", " ", rest).strip(" .-_")
+    return rest if re.search(r"[A-Za-zÀ-ÿ]{2}", rest) else ""
+
+
+def _tidy_name(plan: Plan, p: Path, show: str, folder: str, s: int, e: int, e2: Optional[int],
+               pad: int, group: str, taken: set[str]) -> None:
+    """Deja un nombre que ya tiene SxxEyy como 'Serie - S01E01[ - Titulo].ext'."""
+    m = GOOD_EP.search(p.name)
+    title = _episode_title(re.sub(r"(\.(mkv|mp4|avi|m4v|ts))+$", "", p.name, flags=re.I), m.end())
+    code = f"S{s:02d}E{e:0{pad}d}" + (f"-E{e2:0{pad}d}" if e2 else "")
+    new = f"{show} - {code}" + (f" - {title}" if title else "") + p.suffix.lower()
+    if new == p.name:
+        return
+    # Un nombre ya ordenado se deja aunque lleve el año de la carpeta o otro
+    # relleno (S01E01 frente a S01E001): cambiarlo no aporta nada.
+    prefix = "(?:" + re.escape(show) + "|" + re.escape(folder) + ")"
+    if re.fullmatch(prefix + r" - S\d{2}E\d{2,4}(-E\d{2,4})?( - .+)?\.[a-z0-9]{2,4}", p.name) \
+            and not TAGS.search(p.name[m.end():]) and "[" not in p.name:
+        return
+    reason = "extension repetida" if re.search(r"(\.(mkv|mp4|avi|m4v|ts)){2,}$", p.name, re.I) \
+        else "limpiar nombre"
+    _add_rename(plan, p, p.with_name(new), reason, group, taken)
+
+
 def _fix_mixed_numbering(plan: Plan, show: str, group: str,
                          good_files: list[tuple[Path, int, int, Optional[int]]],
-                         have: dict[int, set[int]], taken: set[str]) -> None:
+                         have: dict[int, set[int]], taken: set[str]) -> set[Path]:
     """Temporada que empieza en E01 pero tiene una cola con numeros absolutos
     (Fire Force S03E01-E13 y S03E71-E73): la cola se pasa a numeracion de la
-    temporada restando los episodios de las temporadas anteriores."""
+    temporada restando los episodios de las temporadas anteriores. Devuelve
+    los archivos que ya tienen propuesta."""
+    fixed: set[Path] = set()
     for s in sorted(have):
         eps = sorted(have[s])
         if s < 2 or not eps or eps[0] != 1 or len(eps) < 2:
@@ -342,7 +378,9 @@ def _fix_mixed_numbering(plan: Plan, show: str, group: str,
             code = f"S{s:02d}E{ne:0{pad}d}" + (f"-E{ne2:0{pad}d}" if ne2 else "")
             _add_rename(plan, p, p.with_name(f"{show} - {code}{p.suffix.lower()}"),
                         f"numero absoluto dentro de la temporada (E{e} = E{ne})", group, taken)
+            fixed.add(p)
         have[s] = low | {e - offset for e in high}
+    return fixed
 
 
 def _ranges(nums: list[int]) -> str:

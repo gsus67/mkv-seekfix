@@ -119,6 +119,22 @@ class SeriesTests(unittest.TestCase):
         miss = [i.data["missing"] for i in p.issues if i.problem == "faltan episodios"]
         self.assertEqual(miss, [list(range(14, 23)) + [24]])
 
+    def test_tidy_messy_names(self):
+        touch(self.root,
+              "Darling/Season 02/My.Dress.Up.Darling.S02E02.You.Can.Equip.Boobs.1080p.CR.WEB-DL.AAC2.0.H.264.mkv",
+              "Darling/Season 02/My.Dress-Up.Darling.S02e07.1080P.Cr.Web-Dl.mkv",
+              "Black Clover (2017)/Season 01/Black Clover (2017) - S01E37 - The One with No Magic.mkv",
+              "Chainsaw Man (2022)/Season 01/[Aw] Chainsaw Man - S01e09 [1080P].mkv",
+              "Lioness/Season 02/Lioness - S02E08.mkv.mkv")
+        _, r = self.plan()
+        self.assertEqual(Path(r["Darling/Season 02/My.Dress.Up.Darling.S02E02.You.Can.Equip.Boobs.1080p.CR.WEB-DL.AAC2.0.H.264.mkv"]).name,
+                         "Darling - S02E02 - You Can Equip Boobs.mkv")
+        self.assertEqual(Path(r["Darling/Season 02/My.Dress-Up.Darling.S02e07.1080P.Cr.Web-Dl.mkv"]).name, "Darling - S02E07.mkv")
+        self.assertEqual(Path(r["Chainsaw Man (2022)/Season 01/[Aw] Chainsaw Man - S01e09 [1080P].mkv"]).name,
+                         "Chainsaw Man - S01E09.mkv")
+        self.assertEqual(Path(r["Lioness/Season 02/Lioness - S02E08.mkv.mkv"]).name, "Lioness - S02E08.mkv")
+        self.assertNotIn("Black Clover (2017)/Season 01/Black Clover (2017) - S01E37 - The One with No Magic.mkv", r)
+
     def test_sidecar_follows_video(self):
         touch(self.root, "Show/Season 1/3.mkv", "Show/Season 1/3.es.srt")
         _, r = self.plan()

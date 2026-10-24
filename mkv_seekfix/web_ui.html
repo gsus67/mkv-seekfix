@@ -324,15 +324,22 @@ function renderNames() {
   $("#namesIssuesCard").hidden = !issues.length;
   const box = $("#namesOps");
   box.innerHTML = ops.length ? "" : '<p class="ok">Todo en orden: no hay cambios que proponer.</p>';
+  let gi = 0;
   for (const [g, list] of groupBy(ops)) {
-    box.insertAdjacentHTML("beforeend", `<div class="group">${esc(g)} <span class="tag">${list.length}</span></div>`);
+    const gid = "g" + (gi++);
+    box.insertAdjacentHTML("beforeend", `<label class="group chk"><input type="checkbox" data-group="${gid}" checked>
+      ${esc(g)} <span class="tag">${list.length}</span></label>`);
     list.forEach((o) => {
       const to = o.kind === "trash" ? '<span class="tag trash">a la papelera</span>' :
         esc(o.dst.split("/").slice(-2).join("/"));
-      box.insertAdjacentHTML("beforeend", `<label class="op"><input type="checkbox" data-op="${o.id}" checked>
+      box.insertAdjacentHTML("beforeend", `<label class="op"><input type="checkbox" data-op="${o.id}" data-in="${gid}" checked>
         <div><div class="from">${esc(rel(o.src))}</div><div class="to">→ ${to} <span class="tag">${esc(o.reason)}</span></div></div></label>`);
     });
   }
+  box.querySelectorAll("[data-group]").forEach((c) => c.onchange = () =>
+    box.querySelectorAll(`[data-in="${c.dataset.group}"]`).forEach((x) => x.checked = c.checked));
+  if (ops.length) box.insertAdjacentHTML("afterbegin", `<p class="muted small">${ops.length} cambios en ${gi} grupos.
+    Desmarca una serie entera con su casilla. Ojo: al renombrar, Jellyfin puede perder la marca de «visto» de esos episodios.</p>`);
   const ib = $("#namesIssues"); ib.innerHTML = "";
   issues.forEach((it, k) => {
     const d = document.createElement("div"); d.className = "issue";
@@ -375,7 +382,7 @@ function renderNames() {
     ib.appendChild(d);
   });
 }
-$("#namesAll").onchange = (e) => document.querySelectorAll("[data-op]").forEach((c) => c.checked = e.target.checked);
+$("#namesAll").onchange = (e) => document.querySelectorAll("[data-op], [data-group]").forEach((c) => c.checked = e.target.checked);
 function applyOps(ops, after) {
   startJob("/api/names/apply", {ops}, (j) => {
     const r = j.result || {results: []};
