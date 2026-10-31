@@ -79,7 +79,10 @@ no acumular imágenes viejas. Los ajustes y registros se conservan en `/config`.
 - **Registros**: cada aplicación de cambios guarda un registro; *Deshacer*
   devuelve cada archivo a su sitio.
 - **Ajustes**: actualización, respaldo de MKV (restaurar o vaciar), clave e
-  idioma de TMDB y carpetas de papelera y respaldo.
+  idioma de TMDB y carpetas de papelera y respaldo. La carpeta de respaldo debe
+  ser exclusiva: no puede ser ni contener la biblioteca, la papelera, la
+  configuración ni el home. *Vaciar* solo actúa sobre la carpeta por defecto o
+  una que estaba vacía cuando se usó por primera vez.
 
 ### Clave de TMDB (opcional)
 

@@ -48,6 +48,43 @@ class Config:
         self.settings_file.write_text(json.dumps(self.settings, indent=2, ensure_ascii=False),
                                       encoding="utf-8")
 
+    def backup_dir_problem(self, settings: Optional[dict] = None) -> Optional[str]:
+        """Motivo por el que backup_dir no sirve como carpeta de respaldo, o None."""
+        settings = settings if settings is not None else self.settings
+        path = Path(settings.get("backup_dir") or "")
+        if not path.is_absolute():
+            return "la carpeta de respaldo debe ser una ruta absoluta"
+        if path.is_symlink():
+            return "la carpeta de respaldo no puede ser un enlace simbolico"
+        if path.exists() and not path.is_dir():
+            return "la ruta de respaldo no es una carpeta"
+        backup = path.resolve()
+        for guarded in (Path.home(), self.config_dir.resolve(), self.media_root):
+            if backup == guarded or backup in guarded.parents:
+                return f"la carpeta de respaldo no puede ser ni contener {guarded}"
+        others = [f["path"] for f in settings.get("folders") or []]
+        if settings.get("trash_dir"):
+            others.append(settings["trash_dir"])
+        for other in others:
+            guarded = Path(other).resolve()
+            if backup == guarded or backup in guarded.parents or guarded in backup.parents:
+                return f"la carpeta de respaldo no puede solaparse con {guarded}"
+        return None
+
+    def backup_is_ours(self, backup: Path) -> bool:
+        """Solo se vacia la carpeta por defecto o una que estaba vacia al estrenarse."""
+        resolved = backup.resolve()
+        return (resolved == (self.config_dir / "respaldo-mkv").resolve()
+                or self.settings.get("backup_owned_dir") == str(resolved))
+
+    def claim_backup_dir(self, backup: Path) -> None:
+        """Registra la carpeta como propia si no tiene contenido ajeno."""
+        if self.backup_is_ours(backup):
+            return
+        if not backup.exists() or not any(backup.iterdir()):
+            self.settings["backup_owned_dir"] = str(backup.resolve())
+            self.save()
+
     def inside(self, path: str) -> Path:
         """Ruta resuelta dentro de MEDIA_ROOT, o ValueError."""
         p = Path(path).resolve()
@@ -276,6 +313,11 @@ class App:
     def seek_fix(self, files: list[str], dry_run: bool, min_free_gb: float = 50.0) -> Job:
         paths = [self.cfg.inside(f) for f in files]
         backup = Path(self.cfg.settings["backup_dir"])
+        if not dry_run:
+            problem = self.cfg.backup_dir_problem()
+            if problem:
+                raise ValueError(problem)
+            self.cfg.claim_backup_dir(backup)
 
         def fn(job: Job):
             job.total = len(paths)
@@ -326,6 +368,16 @@ class App:
                             g, {"files": files})
                 for g, files in sorted(by_group.items())]
 
+    def save_settings(self, body: dict) -> None:
+        changes = {k: body[k] for k in ("tmdb_language", "trash_dir", "backup_dir", "folders") if k in body}
+        problem = self.cfg.backup_dir_problem({**self.cfg.settings, **changes})
+        if problem:
+            raise ValueError(problem)
+        self.cfg.settings.update(changes)
+        if body.get("tmdb_key") and body["tmdb_key"] != "********":
+            self.cfg.settings["tmdb_key"] = body["tmdb_key"]
+        self.cfg.save()
+
     def backup_info(self) -> dict:
         backup = Path(self.cfg.settings["backup_dir"])
         size = files = 0
@@ -343,6 +395,11 @@ class App:
         """Borra de verdad los originales guardados (despues de comprobar en la
         TV que los arreglados van bien)."""
         backup = Path(self.cfg.settings["backup_dir"])
+        problem = self.cfg.backup_dir_problem()
+        if problem:
+            raise ValueError(problem)
+        if backup.exists() and not self.cfg.backup_is_ours(backup):
+            raise ValueError(f"{backup} no se reconoce como respaldo de mkv-seekfix; vaciala a mano")
         info = self.backup_info()
         if backup.exists():
             for child in backup.iterdir():
@@ -473,12 +530,7 @@ def make_handler(app: App):
                 body = json.loads(self.rfile.read(length) or b"{}")
                 path = urlparse(self.path).path
                 if path == "/api/settings":
-                    for k in ("tmdb_language", "trash_dir", "backup_dir", "folders"):
-                        if k in body:
-                            app.cfg.settings[k] = body[k]
-                    if body.get("tmdb_key") and body["tmdb_key"] != "********":
-                        app.cfg.settings["tmdb_key"] = body["tmdb_key"]
-                    app.cfg.save()
+                    app.save_settings(body)
                     self._json({"ok": True})
                 elif path == "/api/names/scan":
                     self._json(app.names_scan(body["folders"]).to_dict())
