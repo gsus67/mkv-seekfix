@@ -1,188 +1,106 @@
 # mkv-seekfix
 
-Herramienta con interfaz web para dejar a punto una biblioteca de Jellyfin:
+**English** · [Español](README.es.md)
 
-- **Nombres**: renombra episodios a `Serie - S01E01`, avisa de episodios que
-  faltan, de películas sin año y de películas duplicadas.
-- **Saltos MKV**: arregla los MKV que **no se pueden adelantar ni atrasar** en
-  algunas TV (típicamente Android TV / ExoPlayer), sin recodificar.
+A tool with a web interface for tidying up a Jellyfin library:
 
-Nada se borra: lo que se quita va a una papelera, los originales de MKV a un
-respaldo, y cada cambio de nombre queda en un registro que se puede deshacer.
+- **Names:** renames episodes to `Show - S01E01`, and flags missing episodes,
+  movies without a year and duplicate movies.
+- **MKV seeking:** fixes MKV files that **can't be fast-forwarded or rewound** on
+  some TVs (typically Android TV / ExoPlayer), without re-encoding.
 
-## Instalar con Docker
+Removed files go to a trash folder, original MKVs go to a backup folder, and
+every rename is logged so it can be undone.
 
-El servidor construye la imagen con el código de este repositorio (rama
-`main`), sin registros intermedios. Solo necesita Docker y `curl` (no `git`).
+## Install with Docker
 
-1. Crea una carpeta, por ejemplo `/volume1/docker/mkv-seekfix`, y pon en ella
-   [`docker-compose.yml`](docker-compose.yml) y
-   [`scripts/actualizar.sh`](scripts/actualizar.sh).
-2. En `docker-compose.yml` ajusta la ruta de tu biblioteca (`/media`) y, si
-   quieres, una contraseña (`MKV_SEEKFIX_PASSWORD`).
-3. Instala:
+The server builds the image from this repository's `main` branch. It only needs
+Docker and `curl`.
 
-   ```
-   sh actualizar.sh
-   ```
+1. Create a folder such as `/volume1/docker/mkv-seekfix` and put
+   [`docker-compose.yml`](docker-compose.yml) and
+   [`scripts/actualizar.sh`](scripts/actualizar.sh) in it.
+2. In `docker-compose.yml`, set your library path (`/media`) and a password
+   (`MKV_SEEKFIX_PASSWORD`).
+3. Run `sh actualizar.sh`.
 
-Se abre en `http://IP-DEL-SERVIDOR:8765` (puerto configurable en el compose).
+It opens at `http://SERVER-IP:8765`.
 
-### Actualizar
+### Update
 
-Desde la web: **Ajustes → Actualización → Actualizar ahora** (arriba aparece
-un aviso cuando hay versión nueva). Lanza un contenedor `docker:cli` temporal
-que ejecuta `actualizar.sh`; al terminar se borra el contenedor y su imagen.
-Necesita el socket de Docker y `MKV_SEEKFIX_HOST_DIR` del compose de ejemplo.
-Con el socket montado la web controla el servidor: **pon contraseña**
-(`MKV_SEEKFIX_PASSWORD`).
+Use **Ajustes → Actualización → Actualizar ahora** in the web interface, or run
+`sh actualizar.sh` in the compose folder. Settings and logs stay in `/config`.
 
-O a mano, en la carpeta del compose:
+Updating from the web interface needs the Docker socket and
+`MKV_SEEKFIX_HOST_DIR` from the example compose file. With the socket mounted,
+the web interface controls the server, so **set a password**.
 
-```
-sh actualizar.sh
-```
+## Using the web interface
 
-Descarga lo último de `main` en `src/`, reconstruye la imagen, reinicia el contenedor y
-**borra la imagen anterior y la caché de construcción** que quedan sin uso, para
-no acumular imágenes viejas. Los ajustes y registros se conservan en `/config`.
+- **Folders:** choose what to check inside `/media`, and mark each folder as
+  series/anime or movies.
+- **Scan:** shows one card per show with its seasons, missing episodes, proposed
+  renames, warnings and MKVs without a seek index. Apply one show or everything
+  selected.
+- **Logs:** undo any applied set of changes. Moves that can't be undone stay in
+  the log so you can retry.
+- **Settings:** updates, MKV backup, TMDB key, and trash and backup folders.
 
-## Uso de la web
+The backup folder must be dedicated to this tool: it can't be or contain the
+library, trash, configuration or home folder. **Empty** only works on the default
+folder or one that was empty when first used.
 
-- **Carpetas**: elige con un navegador de carpetas qué revisar y si cada una es
-  de *Series / Anime* o de *Películas*. Solo se puede navegar dentro de
-  `/media`.
-- **Escaneo**: una sola pasada por las carpetas elegidas, con el avance en
-  directo (fase, serie o archivo que está leyendo, tiempo y botón de cancelar).
-  El resultado es **una ficha por serie** con sus temporadas, los episodios que
-  faltan, los cambios de nombre (nombre actual → cómo quedará), los avisos y los
-  MKV sin índice. Cada ficha tiene su casilla y su botón **Aplicar esta serie**,
-  y arriba hay **Aplicar seleccionados**.
-  - Series y anime: cada episodio queda como `Serie - S01E01 - Título.ext` en
-    carpetas `Season 01` (`Season 00` para especiales). Entiende `1x01`,
-    `S01.E01`, `Temporada 1 Capitulo 1`, `1.1`, números sueltos, `2995_01`,
-    episodios dobles (`026-027` → `S01E026-E027`) y numeración absoluta. Limpia
-    los puntos, `[grupos]` y etiquetas de los nombres desordenados. Los
-    subtítulos con el mismo nombre acompañan al video.
-  - **Episodios que faltan**: huecos dentro de cada temporada y, con clave de
-    TMDB, los que faltan al final. Si faltan, avisa de los archivos que duran
-    el doble (pueden traer dos episodios).
-  - **Películas sin año**: con clave de TMDB propone el año eligiendo el
-    resultado cuya duración coincide con la del archivo (`Papillon` de
-    150 min → 1973, no 2017). Sin clave, el año se escribe a mano.
-  - **Películas duplicadas**: si la copia más pequeña es inferior a 1080p y sin
-    audio dual, propone quitarla; si las dos tienen la misma calidad, propone
-    quitar la más grande; si no, decides tú.
-  - **MKV sin índice de saltos** (no dejan adelantar en algunas TV): salen en la
-    ficha con el botón **Arreglar estos N**. Se reempaquetan sin recodificar y
-    el original va al respaldo.
-- **Registros**: cada aplicación de cambios guarda un registro; *Deshacer*
-  devuelve cada archivo a su sitio.
-- **Ajustes**: actualización, respaldo de MKV (restaurar o vaciar), clave e
-  idioma de TMDB y carpetas de papelera y respaldo. La carpeta de respaldo debe
-  ser exclusiva: no puede ser ni contener la biblioteca, la papelera, la
-  configuración ni el home. *Vaciar* solo actúa sobre la carpeta por defecto o
-  una que estaba vacía cuando se usó por primera vez.
-
-### Clave de TMDB (opcional)
-
-Gratis en [themoviedb.org](https://www.themoviedb.org/settings/api) → Ajustes →
-API. Vale la clave v3 o el token de lectura v4. Se guarda en
+For the end of each season and movie years, add a free
+[TMDB API key](https://www.themoviedb.org/settings/api). It's stored in
 `/config/settings.json`.
 
-## Saltos MKV: qué pasa y qué hace
+## How the MKV fix works
 
-Un MKV necesita un índice de saltos (*Cues*). Muchos reproductores solo lo
-encuentran si el archivo lo referencia **al principio**. Si el índice está
-solo en medio o al final y nada lo señala, la TV no puede saltar. FFmpeg sí lo
-encuentra, por eso en el servidor el archivo "parece" estar bien.
+Many players only find an MKV's seek index (*Cues*) when it's referenced at the
+start of the file. The fix remuxes the file with `-c copy -cues_to_front 1`, then
+checks that the streams, duration, index and size are right. If a check fails,
+the original isn't touched. If all pass, the original moves to the backup folder.
 
-El arreglo reempaqueta el archivo **sin recodificar**
-(`-c copy -cues_to_front 1`): misma imagen, mismo sonido, mismos subtítulos y
-capítulos. Antes de sustituir nada, verifica el resultado:
+## Command line
 
-- mismos flujos (video, audios, subtítulos),
-- misma duración (±0,5 s) cuando el original la declara,
-- índice presente al principio,
-- tamaño coherente (±2 %).
+Requires Python 3.9 or later, plus `ffmpeg` and `ffprobe` in the `PATH`.
 
-Si algo no cuadra, el original no se toca. Si todo cuadra, el original se
-mueve a la carpeta de respaldo y el nuevo ocupa su lugar con los mismos
-permisos y dueño.
-
-## Línea de comandos (sin Docker)
-
-Requisitos: Python 3.9 o superior (sin dependencias de pip), y `ffmpeg` y
-`ffprobe` en el PATH.
-
-```
+```sh
 pip install .
 
-# Web
 mkv-seekfix web --media-root /media --config-dir ./config --port 8765
-
-# Nombres (solo lectura)
 mkv-seekfix names /media/anime
-mkv-seekfix names /media/peliculas --kind movies
-
-# Saltos MKV
-mkv-seekfix scan /ruta/biblioteca --list-file afectados.txt
-mkv-seekfix fix --from-list afectados.txt --backup-dir /ruta/respaldo --dry-run
-mkv-seekfix fix --from-list afectados.txt --backup-dir /ruta/respaldo --log fix.log
-mkv-seekfix restore --backup-dir /ruta/respaldo
+mkv-seekfix names /media/movies --kind movies
+mkv-seekfix scan /path/to/library --list-file affected.txt
+mkv-seekfix fix --from-list affected.txt --backup-dir /path/to/backup --dry-run
+mkv-seekfix restore --backup-dir /path/to/backup
 ```
 
-`fix` exige `--backup-dir` o `--no-backup` de forma explícita. Opciones útiles:
+`names` is read-only. `fix` requires `--backup-dir` or `--no-backup`. Run
+`mkv-seekfix fix --help` for all options, including running `ffmpeg` from another
+container.
 
-| Opción | Para qué |
-|---|---|
-| `--limit N` | procesar solo N archivos (para probar) |
-| `--min-age S` | omitir archivos modificados hace menos de S s (descargas en curso; def. 300) |
-| `--min-free-gb G` | parar si queda menos espacio libre (def. 50) |
-| `--work-dir D` | carpeta temporal (def.: junto al archivo, para renombrar de forma atómica) |
-| `--log F` | registro en archivo |
+## Known limits
 
-`scan` devuelve código 1 si hay afectados, y `fix` devuelve 1 si hubo errores.
-
-Si `ffmpeg` solo existe en otro contenedor (por ejemplo el de Jellyfin):
-
-```
-mkv-seekfix fix /datos/media \
-  --backup-dir /datos/respaldo \
-  --ffmpeg  "docker exec -u 1000:1000 jellyfin /usr/lib/jellyfin-ffmpeg/ffmpeg" \
-  --ffprobe "docker exec jellyfin /usr/lib/jellyfin-ffmpeg/ffprobe" \
-  --path-map /datos/media=/media
-```
-
-Variables de entorno: `MKV_SEEKFIX_MEDIA`, `MKV_SEEKFIX_CONFIG`,
-`MKV_SEEKFIX_PORT`, `MKV_SEEKFIX_PASSWORD`, `MKV_SEEKFIX_FFMPEG`,
-`MKV_SEEKFIX_FFPROBE`.
-
-## Límites conocidos
-
-- La detección de saltos es una heurística sobre los primeros 64 KB
-  (`--probe-bytes`). Un archivo con adjuntos muy grandes antes del índice
-  podría marcarse como afectado sin serlo; arreglarlo no hace daño.
-- Reescribir un MKV usa disco y tarda (≈ velocidad de copia). Si el archivo se
-  comparte por torrent, el torrent lo dará por dañado.
-- Solo MKV. Los MP4 con el `moov` al final son otro caso.
-- Nombres: si una carpeta de temporada no dice qué temporada es (por ejemplo
-  arcos de One Piece) y el archivo no lleva `SxxEyy`, se avisa en vez de
-  adivinar. La comparación con TMDB usa el primer resultado de búsqueda:
-  revisa el nombre que muestra el aviso.
+- Detection checks the first 64 KB, so a file with very large attachments may be
+  flagged by mistake. Fixing it does no harm.
+- Remuxing uses disk space and takes about as long as copying the file. A torrent
+  client will report a rewritten file as damaged.
+- MKV only.
+- If a season folder doesn't say which season it is and the file has no `SxxEyy`,
+  the tool warns you instead of guessing.
 
 ## Tests
 
-```
+```sh
 python3 -m unittest discover -s tests -v
 ```
 
-Los tests que usan ffmpeg se omiten si no está instalado.
+Tests that use ffmpeg are skipped when it isn't installed.
 
-## Aviso
+## Notice
 
-La herramienta solo renombra, mueve y reempaqueta archivos que ya tienes; no
-descarga ni comparte contenido.
+This tool only renames, moves and remuxes files you already have. It doesn't
+download or share content.
 
-Este producto usa la API de TMDB, pero no está respaldado ni certificado por
-TMDB.
+This product uses the TMDB API but is not endorsed or certified by TMDB.
