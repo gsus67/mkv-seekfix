@@ -258,7 +258,12 @@ document.querySelectorAll("nav button").forEach((b) => b.onclick = () => {
 
 // ---------------------------------------------------------------- carpetas
 async function saveFolders() {
-  await api("/api/settings", {folders: state.settings.folders});
+  try {
+    await api("/api/settings", {folders: state.settings.folders});
+  } catch (e) {
+    toast(e.message);
+    state = await api("/api/state");
+  }
   renderFolders();
 }
 function renderFolders() {
