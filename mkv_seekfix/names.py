@@ -657,6 +657,7 @@ def undo_log(log_file: Path) -> list[dict]:
     """Deshace un registro de apply_ops, del ultimo movimiento al primero."""
     entries = [json.loads(l) for l in Path(log_file).read_text(encoding="utf-8").splitlines() if l.strip()]
     results = []
+    failed = []
     for e in reversed(entries):
         src, dst = Path(e["src"]), Path(e["dst"])
         try:
@@ -674,5 +675,12 @@ def undo_log(log_file: Path) -> list[dict]:
             results.append({"src": str(src), "status": "ok"})
         except OSError as exc:
             results.append({"src": str(src), "status": "error", "detail": str(exc)})
-    Path(log_file).rename(str(log_file) + ".deshecho")
+            failed.append(e)
+    if failed:
+        # Lo que fallo sigue en el registro para reintentarlo desde la web.
+        pending = Path(str(log_file) + ".tmp")
+        pending.write_text("".join(json.dumps(e, ensure_ascii=False) + "\n" for e in reversed(failed)), encoding="utf-8")
+        pending.replace(log_file)
+    else:
+        Path(log_file).rename(str(log_file) + ".deshecho")
     return results
