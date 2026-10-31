@@ -93,6 +93,18 @@ class App:
         self.cfg = cfg
         self.job: Optional[Job] = None
         self.lock = threading.Lock()
+        self.moved: list[tuple[str, str]] = []  # renombrados desde el ultimo escaneo
+
+    def current_path(self, path: str) -> str:
+        """Ruta actual de un archivo que un aviso aun nombra con su ruta anterior."""
+        if Path(path).exists():
+            return path
+        for src, dst in self.moved:
+            if path == src:
+                path = dst
+            elif path.startswith(src + "/"):
+                path = dst + path[len(src):]
+        return path
 
     def start(self, kind: str, fn: Callable[[Job], object]) -> Job:
         with self.lock:
@@ -116,6 +128,7 @@ class App:
     def names_scan(self, folders: list[dict]) -> Job:
         checked = [(self.cfg.inside(f["path"]), f["kind"]) for f in folders]
         ffprobe = self.cfg.tools.ffprobe
+        self.moved = []
 
         def fn(job: Job):
             out = {"ops": [], "issues": [], "shows": []}
@@ -205,6 +218,8 @@ class App:
             for op in checked:
                 res = names.apply_ops([op], log_file, trash)[0]
                 results.append(res)
+                if op.kind == "rename" and res["status"] == "ok":
+                    self.moved.append((op.src, res["dst"]))
                 job.done += 1
                 job.log(f"{res['status'].upper()} {Path(op.src).name}"
                         + (f" -> {Path(res['dst']).name}" if res.get("dst") else "")
@@ -274,7 +289,7 @@ class App:
         return self.start("seek-scan", fn)
 
     def seek_fix(self, files: list[str], dry_run: bool, min_free_gb: float = 50.0) -> Job:
-        paths = [self.cfg.inside(f) for f in files]
+        paths = [self.cfg.inside(self.current_path(f)) for f in files]
         backup = Path(self.cfg.settings["backup_dir"])
 
         def fn(job: Job):
