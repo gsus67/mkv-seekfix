@@ -241,6 +241,43 @@ class ApplyTests(unittest.TestCase):
             self.assertFalse((root / "lib/Horimiya/Season 01").exists())
 
 
+class UndoLogTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        touch(self.root, "lib/a.mkv", "lib/b.mkv")
+        ops = [names.Op(str(self.root / "lib/a.mkv"), str(self.root / "lib/a2.mkv"), "rename"),
+               names.Op(str(self.root / "lib/b.mkv"), str(self.root / "lib/b2.mkv"), "rename")]
+        self.log = self.root / "logs/a.jsonl"
+        names.apply_ops(ops, self.log, None)
+
+    def test_all_ok_retires_log(self):
+        res = names.undo_log(self.log)
+        self.assertTrue(all(r["status"] == "ok" for r in res), res)
+        self.assertFalse(self.log.exists())
+        self.assertTrue(Path(str(self.log) + ".deshecho").exists())
+
+    def test_failed_move_stays_available_to_retry(self):
+        touch(self.root, "lib/a.mkv")
+        res = names.undo_log(self.log)
+        self.assertEqual(sorted(r["status"] for r in res), ["error", "ok"])
+        self.assertTrue((self.root / "lib/b.mkv").exists())
+        self.assertFalse(Path(str(self.log) + ".deshecho").exists())
+        lines = self.log.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(lines), 1)
+        self.assertIn("a.mkv", lines[0])
+
+    def test_retry_after_resolving_conflict_finishes(self):
+        touch(self.root, "lib/a.mkv")
+        names.undo_log(self.log)
+        (self.root / "lib/a.mkv").unlink()
+        res = names.undo_log(self.log)
+        self.assertEqual([r["status"] for r in res], ["ok"])
+        self.assertTrue((self.root / "lib/a.mkv").exists())
+        self.assertFalse(self.log.exists())
+
+
 class TmdbMatchTests(unittest.TestCase):
     def test_best_match_by_runtime(self):
         c = tmdb.Candidate

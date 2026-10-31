@@ -544,7 +544,11 @@ async function loadLogs() {
       <button class="b danger">Deshacer</button>`;
     li.querySelector("button").onclick = () => {
       if (!confirm("¿Deshacer " + l.name + "?")) return;
-      startJob("/api/names/undo", {log: l.name}, (j) => { toast("Deshecho"); loadLogs(); });
+      startJob("/api/names/undo", {log: l.name}, (j) => {
+        const bad = ((j.result || {}).results || []).filter((x) => x.status !== "ok").length;
+        toast(bad ? `${bad} sin deshacer: resuelve el conflicto y reintenta` : "Deshecho");
+        loadLogs();
+      });
     };
     ul.appendChild(li);
   });
