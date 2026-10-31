@@ -388,8 +388,8 @@ function issueEl(it) {
       const txt = `ok ${c.ok || 0}` + (c.skip ? `, omitidos ${c.skip}` : "") + (c.error ? `, errores ${c.error}` : "");
       if (c.stopped) { toast("Parado: " + c.stopped); b.textContent = `Parado: ${c.stopped}`; b.disabled = false; return; }
       toast("MKV: " + txt);
-      b.textContent = c.error ? `Hecho con errores (${txt})` : `✓ Arreglados (${txt})`;
-      b.disabled = !c.error;
+      b.textContent = c.error ? `Hecho con errores (${txt})` : c.ok ? `✓ Arreglados (${txt})` : `Nada arreglado (${txt})`;
+      b.disabled = !c.error && !!c.ok;
     }, "#namesBar", "#namesInfo");
   });
   d.querySelectorAll("button[data-trash]").forEach((b) => b.onclick = () => {
